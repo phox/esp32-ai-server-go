@@ -1,6 +1,6 @@
-# 小智服务商业版
+# AI服务端
 
-本项目目标为 **小智AI提供商业版后端解决方案**，提供 **高并发，低成本，功能全面，开箱即用的高性能服务**，助力企业快速搭建小智后端服务。
+本项目目标为 **AI后端解决方案**，提供 **高并发，低成本，功能全面，开箱即用的高性能服务**。
 
 项目大模型调用全部采用api方式调用，不在本地部署模型，以保证服务的精简和便捷部署。
 如需要本地部署模型，可单独部署并开放api供本项目调用即可。
@@ -10,8 +10,6 @@
 ✔ **高并发**——单台服务支持3000以上用户同时在线，分布式部署支持百万用户同时在线
 
 ✔ **用户管理**——提供完整的用户注册、登录、管理等功能
-
-✔ **便捷收费**——提供完善的支付系统，助力企业快速实现盈利
 
 ✔ **专业运维保障**——资深技术团队提供7×24小时监控、故障响应及性能优化支持
 
@@ -29,14 +27,6 @@
 * [ ] IOT功能
 
 # 安装和使用
-
-## 下载Release版
-
-推荐下载[Releases ](https://github.com/AnimeAIChat/xiaozhi-server-go/releases)版体验，避免配置开发环境，尽快体验服务效果
-
-选择对应平台的版本，以windows为例，可以下载windows-amd64-server.exe，也可以下载windows-amd64-server-upx.exe（经过upx压缩，体积更小，效果相同，方便远程部署，其他平台均有upx版本）
-
-下载后放到一个目录，尽量使用英文路径
 
 ## 配置config
 
@@ -70,7 +60,7 @@ http://xxx.x.x.x:8080/api/ota/
 
 ## MCP配置使用
 
-参考MCP目录下的[README文件](https://github.com/AnimeAIChat/xiaozhi-server-go/blob/main/src/core/mcp/README.md)
+参考MCP目录下的[README文件](https://github.com/phox/esp32-ai-server-go/blob/main/src/core/mcp/README.md)
 
 # 源码安装和部署
 
@@ -82,7 +72,7 @@ http://xxx.x.x.x:8080/api/ota/
 
 ## 下载源码
 
-git clone https://github.com/AnimeAIChat/xiaozhi-server-go.git
+git clone https://github.com/phox/esp32-ai-server-go.git
 
 ## 修改配置文件
 
@@ -123,13 +113,13 @@ go mod tidy
 ## 编译
 
 ```
-go build -o xiaozhi-server.exe src/main.go
+go build -o ai-server.exe src/main.go
 ```
 
 ## 运行
 
 ```
-.\xiaozhi-server.exe
+.\ai-server.exe
 ```
 
 ## Centos系统下源码部署安装指南
@@ -137,11 +127,5 @@ go build -o xiaozhi-server.exe src/main.go
 - [Centos 8 安装指南](Centos_Guide.md)
 
 # 贡献指南
-欢迎任何形式的贡献！如果您有好的想法或发现问题，请通过以下方式联系我们：
-
-<img src="https://github.com/user-attachments/assets/5469a068-31da-4489-b9c3-1fdac8496cfe" width="450" alt="微信群二维码">
-
-
-
-## 定制开发
-我们接受各种定制化开发项目，如果您有特定需求，欢迎通过微信联系洽谈。
+欢迎任何形式的贡献！
+本项目Fork自[AnimeAIChat/xiaozhi-server-](https://github.com/AnimeAIChat/xiaozhi-server-go)

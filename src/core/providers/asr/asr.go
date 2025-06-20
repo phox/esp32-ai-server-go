@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"xiaozhi-server-go/src/core/providers"
-	"xiaozhi-server-go/src/core/utils"
+	"ai-server-go/src/core/providers"
+	"ai-server-go/src/core/utils"
 )
 
 // Config ASR配置结构

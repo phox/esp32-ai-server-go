@@ -7,8 +7,8 @@ import (
 	"image"
 	"strings"
 
-	"xiaozhi-server-go/src/configs"
-	"xiaozhi-server-go/src/core/utils"
+	"ai-server-go/src/configs"
+	"ai-server-go/src/core/utils"
 
 	_ "image/gif"  // 注册GIF解码器
 	_ "image/jpeg" // 注册JPEG解码器

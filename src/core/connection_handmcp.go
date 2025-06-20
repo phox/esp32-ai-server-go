@@ -1,10 +1,10 @@
 package core
 
 import (
+	"ai-server-go/src/core/types"
+	"ai-server-go/src/vision"
 	"context"
 	"encoding/json"
-	"xiaozhi-server-go/src/core/types"
-	"xiaozhi-server-go/src/vision"
 )
 
 func (h *ConnectionHandler) initMCPResultHandlers() {

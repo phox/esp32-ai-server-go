@@ -1,15 +1,15 @@
 package core
 
 import (
+	"ai-server-go/src/core/chat"
+	"ai-server-go/src/core/image"
+	"ai-server-go/src/core/providers"
+	"ai-server-go/src/core/utils"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
-	"xiaozhi-server-go/src/core/chat"
-	"xiaozhi-server-go/src/core/image"
-	"xiaozhi-server-go/src/core/providers"
-	"xiaozhi-server-go/src/core/utils"
 )
 
 // handleMessage 处理接收到的消息

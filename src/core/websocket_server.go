@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"xiaozhi-server-go/src/configs"
-	"xiaozhi-server-go/src/core/pool"
-	"xiaozhi-server-go/src/core/utils"
-	"xiaozhi-server-go/src/task"
+	"ai-server-go/src/configs"
+	"ai-server-go/src/core/pool"
+	"ai-server-go/src/core/utils"
+	"ai-server-go/src/task"
 
 	"github.com/gorilla/websocket"
 )

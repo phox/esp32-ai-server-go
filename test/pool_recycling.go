@@ -1,12 +1,12 @@
 package main
 
 import (
+	"ai-server-go/src/configs"
+	"ai-server-go/src/core/pool"
+	"ai-server-go/src/core/utils"
 	"fmt"
 	"log"
 	"time"
-	"xiaozhi-server-go/src/configs"
-	"xiaozhi-server-go/src/core/pool"
-	"xiaozhi-server-go/src/core/utils"
 )
 
 // MockProvider 模拟提供者实现

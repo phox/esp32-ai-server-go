@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"xiaozhi-server-go/src/core/types"
-	"xiaozhi-server-go/src/core/utils"
+	"ai-server-go/src/core/types"
+	"ai-server-go/src/core/utils"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"

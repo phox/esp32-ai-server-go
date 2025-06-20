@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"xiaozhi-server-go/src/core/auth"
-	"xiaozhi-server-go/src/core/types"
-	"xiaozhi-server-go/src/core/utils"
+	"ai-server-go/src/core/auth"
+	"ai-server-go/src/core/types"
+	"ai-server-go/src/core/utils"
 
 	"github.com/sashabaranov/go-openai"
 )

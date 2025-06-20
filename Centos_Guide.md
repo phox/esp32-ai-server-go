@@ -1,4 +1,4 @@
-# Centos 8下小智Server Go版本安装过程
+# Centos 8下安装过程
 
 
 # 1、下载安装go 1.24版本
@@ -116,7 +116,7 @@ go run ./src/main.go
 ```
 # 3、获取源码
 ```
-git clone https://github.com/AnimeAIChat/xiaozhi-server-go
+git clone https://github.com/phox/esp32-ai-server-go
 ```
 下载完成后，复制一份config.yaml到.config.yaml，并在配置中填好相应的key等信息，避免密钥泄漏
 

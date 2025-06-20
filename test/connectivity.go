@@ -1,21 +1,21 @@
 package main
 
 import (
+	"ai-server-go/src/configs"
+	"ai-server-go/src/core/pool"
+	"ai-server-go/src/core/utils"
 	"context"
 	"fmt"
 	"log"
-	"xiaozhi-server-go/src/configs"
-	"xiaozhi-server-go/src/core/pool"
-	"xiaozhi-server-go/src/core/utils"
 
 	// 导入所有providers以确保init函数被调用
-	_ "xiaozhi-server-go/src/core/providers/asr/doubao"
-	_ "xiaozhi-server-go/src/core/providers/llm/ollama"
-	_ "xiaozhi-server-go/src/core/providers/llm/openai"
-	_ "xiaozhi-server-go/src/core/providers/tts/doubao"
-	_ "xiaozhi-server-go/src/core/providers/tts/edge"
-	_ "xiaozhi-server-go/src/core/providers/vlllm/ollama"
-	_ "xiaozhi-server-go/src/core/providers/vlllm/openai"
+	_ "ai-server-go/src/core/providers/asr/doubao"
+	_ "ai-server-go/src/core/providers/llm/ollama"
+	_ "ai-server-go/src/core/providers/llm/openai"
+	_ "ai-server-go/src/core/providers/tts/doubao"
+	_ "ai-server-go/src/core/providers/tts/edge"
+	_ "ai-server-go/src/core/providers/vlllm/ollama"
+	_ "ai-server-go/src/core/providers/vlllm/openai"
 )
 
 func main() {

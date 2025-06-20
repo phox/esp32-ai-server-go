@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"xiaozhi-server-go/src/configs"
-	"xiaozhi-server-go/src/core/utils"
+	"ai-server-go/src/configs"
+	"ai-server-go/src/core/utils"
 
 	"github.com/google/uuid"
 )

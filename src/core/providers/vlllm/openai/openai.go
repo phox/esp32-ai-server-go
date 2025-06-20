@@ -1,8 +1,8 @@
 package openai
 
 import (
-	"xiaozhi-server-go/src/core/providers/vlllm"
-	"xiaozhi-server-go/src/core/utils"
+	"ai-server-go/src/core/providers/vlllm"
+	"ai-server-go/src/core/utils"
 )
 
 // OpenAIVLLMProvider OpenAI类型的VLLLM提供者

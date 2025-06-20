@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"xiaozhi-server-go/src/core/providers"
+	"ai-server-go/src/core/providers"
 )
 
 // Config TTS配置结构

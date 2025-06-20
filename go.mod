@@ -1,4 +1,4 @@
-module xiaozhi-server-go
+module ai-server-go
 
 go 1.24
 

@@ -1,10 +1,10 @@
 package mcp
 
 import (
+	"ai-server-go/src/core/utils"
 	"context"
 	"fmt"
 	"sync"
-	"xiaozhi-server-go/src/core/utils"
 
 	"github.com/sashabaranov/go-openai"
 )

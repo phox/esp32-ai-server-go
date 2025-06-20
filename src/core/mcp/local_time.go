@@ -1,9 +1,9 @@
 package mcp
 
 import (
+	"ai-server-go/src/core/types"
 	"context"
 	"time"
-	"xiaozhi-server-go/src/core/types"
 )
 
 func (c *LocalClient) AddToolTime() error {

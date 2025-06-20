@@ -1,8 +1,8 @@
 package mcp
 
 import (
+	"ai-server-go/src/core/types"
 	"context"
-	"xiaozhi-server-go/src/core/types"
 )
 
 func (c *LocalClient) AddToolExit() error {

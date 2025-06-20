@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"xiaozhi-server-go/src/configs"
+	"ai-server-go/src/configs"
 )
 
 // LogLevel 日志级别

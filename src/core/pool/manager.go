@@ -1,14 +1,14 @@
 package pool
 
 import (
+	"ai-server-go/src/configs"
+	"ai-server-go/src/core/mcp"
+	"ai-server-go/src/core/providers"
+	"ai-server-go/src/core/providers/vlllm"
+	"ai-server-go/src/core/utils"
 	"context"
 	"fmt"
 	"time"
-	"xiaozhi-server-go/src/configs"
-	"xiaozhi-server-go/src/core/mcp"
-	"xiaozhi-server-go/src/core/providers"
-	"xiaozhi-server-go/src/core/providers/vlllm"
-	"xiaozhi-server-go/src/core/utils"
 )
 
 // PoolManager 资源池管理器

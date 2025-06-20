@@ -1,8 +1,8 @@
 package providers
 
 import (
+	"ai-server-go/src/core/types"
 	"context"
-	"xiaozhi-server-go/src/core/types"
 )
 
 // Provider 所有提供者的基础接口

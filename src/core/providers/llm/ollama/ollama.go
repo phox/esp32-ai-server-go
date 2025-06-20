@@ -1,11 +1,11 @@
 package ollama
 
 import (
+	"ai-server-go/src/core/providers/llm"
+	"ai-server-go/src/core/types"
 	"context"
 	"fmt"
 	"strings"
-	"xiaozhi-server-go/src/core/providers/llm"
-	"xiaozhi-server-go/src/core/types"
 
 	"github.com/sashabaranov/go-openai"
 )

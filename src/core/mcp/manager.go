@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"ai-server-go/src/core/types"
+	"ai-server-go/src/core/utils"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,8 +10,6 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-	"xiaozhi-server-go/src/core/types"
-	"xiaozhi-server-go/src/core/utils"
 
 	go_openai "github.com/sashabaranov/go-openai"
 )
