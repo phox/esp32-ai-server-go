@@ -227,6 +227,14 @@ func startServices(config *configs.Config, logger *utils.Logger, g *errgroup.Gro
 	}
 	defer db.Close()
 
+	// 执行数据库迁移
+	migrationManager := database.NewMigrationManager(db, logger)
+	if err := migrationManager.Migrate(); err != nil {
+		logger.Error("数据库迁移失败: %v", err)
+		return err
+	}
+	logger.Info("数据库迁移完成")
+
 	// 初始化系统配置
 	configService := database.NewConfigService(db, logger)
 	if err := configService.InitializeDefaultSystemConfigs(); err != nil {

@@ -1,0 +1,38 @@
+# SQLite 测试配置文件
+server:
+  ip: 0.0.0.0
+  port: 8000
+  token: "test_token"
+  auth:
+    enabled: false
+    allowed_devices: []
+    tokens: []
+
+# SQLite 数据库配置
+database:
+  type: sqlite
+  name: ./data/test.db
+  file_path: ./data/test.db
+  max_open_conns: 1
+  max_idle_conns: 1
+  conn_max_lifetime: 3600s
+
+# Web界面配置
+web:
+  enabled: true
+  port: 8080
+  websocket: ws://localhost:8000
+  vision: http://localhost:8080/api/vision
+
+log:
+  log_format: "{time:YYYY-MM-DD HH:mm:ss} - {level} - {message}"
+  log_level: INFO
+  log_dir: logs
+  log_file: "server.log"
+
+# 注意：ASR、TTS、LLM、VLLLM配置已迁移到数据库
+# 请通过API接口管理这些配置：
+# - GET /api/system-configs/provider - 获取所有provider配置
+# - POST /api/system-configs/provider - 创建provider配置
+# - PUT /api/system-configs/provider/{category}/{name} - 更新provider配置
+# - DELETE /api/system-configs/provider/{category}/{name} - 删除provider配置 

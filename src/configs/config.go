@@ -2,6 +2,7 @@ package configs
 
 import (
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -54,12 +55,28 @@ type VADConfig struct {
 
 // DatabaseConfig 数据库配置结构
 type DatabaseConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	Name     string `yaml:"name"`
-	Charset  string `yaml:"charset"`
+	Type     string `yaml:"type"`     // 数据库类型：mysql, postgresql, sqlite
+	Host     string `yaml:"host"`     // 主机地址（SQLite不需要）
+	Port     int    `yaml:"port"`     // 端口（SQLite不需要）
+	User     string `yaml:"user"`     // 用户名（SQLite不需要）
+	Password string `yaml:"password"` // 密码（SQLite不需要）
+	Name     string `yaml:"name"`     // 数据库名/文件路径
+	Charset  string `yaml:"charset"`  // 字符集（MySQL专用）
+
+	// PostgreSQL特定配置
+	SSLMode string `yaml:"ssl_mode"` // SSL模式：disable, require, verify-ca, verify-full
+
+	// SQLite特定配置
+	FilePath string `yaml:"file_path"` // 文件路径（SQLite专用）
+
+	// 连接池配置
+	MaxOpenConns    int           `yaml:"max_open_conns"`    // 最大打开连接数
+	MaxIdleConns    int           `yaml:"max_idle_conns"`    // 最大空闲连接数
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"` // 连接最大生命周期
+
+	// 其他配置
+	ParseTime bool   `yaml:"parse_time"` // 是否解析时间（MySQL专用）
+	Loc       string `yaml:"loc"`        // 时区（MySQL专用）
 }
 
 // LoadConfig 从文件加载配置

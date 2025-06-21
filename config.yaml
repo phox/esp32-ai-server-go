@@ -15,12 +15,29 @@ server:
 
 # 数据库配置
 database:
+  # 数据库类型：mysql, postgresql, sqlite
+  type: mysql
+  
+  # MySQL配置
   host: localhost
   port: 3306
   user: root
   password: ""
   name: ai_server_go
   charset: utf8mb4
+  parse_time: true
+  loc: Local
+  
+  # PostgreSQL特定配置（当type为postgresql时使用）
+  # ssl_mode: disable  # disable, require, verify-ca, verify-full
+  
+  # SQLite特定配置（当type为sqlite时使用）
+  # file_path: ./data/ai_server.db
+  
+  # 连接池配置
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 3600s
 
 # Web界面配置
 web:
@@ -48,3 +65,42 @@ log:
 # - POST /api/system-configs/provider - 创建provider配置
 # - PUT /api/system-configs/provider/{category}/{name} - 更新provider配置
 # - DELETE /api/system-configs/provider/{category}/{name} - 删除provider配置
+
+# 数据库配置示例：
+# 
+# MySQL配置示例：
+# database:
+#   type: mysql
+#   host: localhost
+#   port: 3306
+#   user: root
+#   password: "your_password"
+#   name: ai_server_go
+#   charset: utf8mb4
+#   parse_time: true
+#   loc: Local
+#   max_open_conns: 100
+#   max_idle_conns: 10
+#   conn_max_lifetime: 3600s
+#
+# PostgreSQL配置示例：
+# database:
+#   type: postgresql
+#   host: localhost
+#   port: 5432
+#   user: postgres
+#   password: "your_password"
+#   name: ai_server_go
+#   ssl_mode: disable
+#   max_open_conns: 100
+#   max_idle_conns: 10
+#   conn_max_lifetime: 3600s
+#
+# SQLite配置示例：
+# database:
+#   type: sqlite
+#   name: ./data/ai_server.db
+#   file_path: ./data/ai_server.db
+#   max_open_conns: 1
+#   max_idle_conns: 1
+#   conn_max_lifetime: 3600s
