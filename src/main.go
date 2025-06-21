@@ -10,9 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"ai-server-go/src/api"
 	"ai-server-go/src/configs"
 	"ai-server-go/src/core"
+	"ai-server-go/src/core/auth"
 	"ai-server-go/src/core/utils"
+	"ai-server-go/src/database"
 	"ai-server-go/src/ota"
 	"ai-server-go/src/vision"
 
@@ -91,6 +94,24 @@ func StartHttpServer(config *configs.Config, logger *utils.Logger, g *errgroup.G
 	}
 	router := gin.Default()
 	router.SetTrustedProxies([]string{"0.0.0.0"})
+
+	// 初始化数据库连接
+	db, err := database.NewDatabase(&config.Database, logger)
+	if err != nil {
+		logger.Error("数据库连接失败: %v", err)
+		return nil, err
+	}
+	defer db.Close()
+
+	// 初始化服务
+	userService := database.NewUserService(db, logger)
+	deviceService := database.NewDeviceService(db, logger)
+	configService := database.NewConfigService(db, logger)
+	authMiddleware := auth.NewAuthMiddleware(userService, logger)
+
+	// 初始化用户管理API
+	userAPI := api.NewUserAPI(userService, deviceService, configService, authMiddleware, logger)
+	userAPI.RegisterRoutes(router)
 
 	// API路由全部挂载到/api前缀下
 	apiGroup := router.Group("/api")

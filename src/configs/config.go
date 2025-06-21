@@ -57,6 +57,8 @@ type Config struct {
 
 	// 连通性检查配置
 	ConnectivityCheck ConnectivityCheckConfig `yaml:"connectivity_check"`
+
+	Database DatabaseConfig `yaml:"database"`
 }
 
 // VADConfig VAD配置结构
@@ -129,6 +131,16 @@ type VLLMConfig struct {
 	TopP        float64                `yaml:"top_p"`       // TopP参数
 	Security    SecurityConfig         `yaml:"security"`    // 图片安全配置
 	Extra       map[string]interface{} `yaml:",inline"`     // 额外配置
+}
+
+// DatabaseConfig 数据库配置结构
+type DatabaseConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	Name     string `yaml:"name"`
+	Charset  string `yaml:"charset"`
 }
 
 // LoadConfig 从文件加载配置

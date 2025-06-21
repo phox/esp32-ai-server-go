@@ -13,6 +13,24 @@ server:
     # 有效的token列表
     tokens: []
 
+# 数据库配置
+database:
+  # 是否启用数据库
+  enabled: true
+  # 数据库类型
+  type: mysql
+  # MySQL配置
+  mysql:
+    host: localhost
+    port: 3306
+    username: root
+    password: ""
+    database: ai_server_go
+    charset: utf8mb4
+    max_open_conns: 100
+    max_idle_conns: 10
+    max_lifetime: 3600  # 秒
+
 # Web界面配置
 web:
   # 是否启用Web界面
