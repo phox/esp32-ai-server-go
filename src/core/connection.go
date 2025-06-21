@@ -19,10 +19,13 @@ import (
 	"ai-server-go/src/core/mcp"
 	"ai-server-go/src/core/pool"
 	"ai-server-go/src/core/providers"
+	"ai-server-go/src/core/providers/asr"
+	"ai-server-go/src/core/providers/llm"
 	"ai-server-go/src/core/providers/tts"
 	"ai-server-go/src/core/providers/vlllm"
 	"ai-server-go/src/core/types"
 	"ai-server-go/src/core/utils"
+	"ai-server-go/src/database"
 	"ai-server-go/src/task"
 
 	"github.com/google/uuid"
@@ -68,6 +71,12 @@ type ConnectionHandler struct {
 		tts   providers.TTSProvider
 		vlllm *vlllm.Provider // VLLLM提供者，可选
 	}
+
+	// 数据库服务
+	dbService     *database.Database
+	configService *database.ConfigService
+	deviceService *database.DeviceService
+	userService   *database.UserService
 
 	// 会话相关
 	sessionID string
@@ -139,64 +148,80 @@ func NewConnectionHandler(
 	req *http.Request,
 	ctx context.Context,
 ) *ConnectionHandler {
+	// 初始化数据库服务
+	dbService, err := database.NewDatabase(&config.Database, logger)
+	if err != nil {
+		logger.Error("初始化数据库连接失败: %v", err)
+		// 如果数据库连接失败，继续使用默认配置
+	}
+
+	var configService *database.ConfigService
+	var deviceService *database.DeviceService
+	var userService *database.UserService
+
+	if dbService != nil {
+		configService = database.NewConfigService(dbService, logger)
+		deviceService = database.NewDeviceService(dbService, logger)
+		userService = database.NewUserService(dbService, logger)
+	}
+
+	// 从请求中提取设备信息
+	deviceID := extractDeviceID(req)
+	clientId := extractClientID(req)
+	sessionID := uuid.New().String()
+
 	handler := &ConnectionHandler{
-		config:           config,
-		logger:           logger,
-		clientListenMode: "auto",
-		stopChan:         make(chan struct{}),
-		clientAudioQueue: make(chan []byte, 100),
-		clientTextQueue:  make(chan string, 100),
+		config:              config,
+		logger:              logger,
+		conn:                nil,
+		taskMgr:             nil, // 稍后设置
+		safeCallbackFunc:    nil, // 稍后设置
+		dbService:           dbService,
+		configService:       configService,
+		deviceService:       deviceService,
+		userService:         userService,
+		sessionID:           sessionID,
+		deviceID:            deviceID,
+		clientId:            clientId,
+		headers:             extractHeaders(req),
+		clientListenMode:    "auto",
+		isDeviceVerified:    false,
+		closeAfterChat:      false,
+		clientVoiceStop:     false,
+		serverVoiceStop:     0,
+		opusDecoder:         nil,
+		dialogueManager:     nil,
+		tts_last_text_index: -1,
+		client_asr_text:     "",
+		quickReplyCache:     nil,
+		stopChan:            make(chan struct{}),
+		clientAudioQueue:    make(chan []byte, 100),
+		clientTextQueue:     make(chan string, 100),
 		ttsQueue: make(chan struct {
 			text      string
-			round     int // 轮次
+			round     int
 			textIndex int
-		}, 100),
+		}, 10),
 		audioMessagesQueue: make(chan struct {
 			filepath  string
 			text      string
-			round     int // 轮次
+			round     int
 			textIndex int
-		}, 100),
-
-		tts_last_text_index: -1,
-
-		talkRound: 0,
-
-		serverAudioFormat:        "opus", // 默认使用Opus格式
-		serverAudioSampleRate:    24000,
-		serverAudioChannels:      1,
-		serverAudioFrameDuration: 60,
-
-		ctx: ctx,
-
-		headers: make(map[string]string),
+		}, 10),
+		talkRound:         0,
+		roundStartTime:    time.Now(),
+		functionRegister:  function.NewFunctionRegistry(),
+		mcpManager:        nil,
+		mcpResultHandlers: make(map[string]func(interface{})),
+		ctx:               ctx,
 	}
 
-	for key, values := range req.Header {
-		if len(values) > 0 {
-			handler.headers[key] = values[0] // 取第一个值
-		}
-		if key == "Device-Id" {
-			handler.deviceID = values[0] // 设备ID
-		}
-		if key == "Client-Id" {
-			handler.clientId = values[0] // 客户端ID
-		}
-		if key == "Session-Id" {
-			handler.sessionID = values[0] // 会话ID
-		}
-		logger.Info("HTTP头部信息: %s: %s", key, values[0])
+	// 尝试根据设备ID获取自定义能力配置
+	if deviceID != "" && configService != nil {
+		handler.initializeDeviceCapabilities(deviceID)
 	}
 
-	if handler.sessionID == "" {
-		if handler.deviceID == "" {
-			handler.sessionID = uuid.New().String() // 如果没有设备ID，则生成新的会话ID
-		} else {
-			handler.sessionID = "device-" + strings.Replace(handler.deviceID, ":", "_", -1)
-		}
-	}
-
-	// 正确设置providers
+	// 如果数据库配置失败或没有设备配置，使用默认的提供者集合
 	if providerSet != nil {
 		handler.providers.asr = providerSet.ASR
 		handler.providers.llm = providerSet.LLM
@@ -1062,4 +1087,239 @@ func (h *ConnectionHandler) genResponseByVLLM(ctx context.Context, messages []pr
 	}))
 
 	return nil
+}
+
+// initializeDeviceCapabilities 根据设备ID初始化设备能力配置
+func (h *ConnectionHandler) initializeDeviceCapabilities(deviceID string) {
+	if h.configService == nil {
+		h.logger.Warn("配置服务未初始化，使用默认配置")
+		return
+	}
+
+	// 获取设备能力配置（带回退逻辑）
+	// 注意：这里暂时使用nil作为userID，因为语音交流时可能没有用户上下文
+	config, err := h.configService.GetDeviceCapabilityConfigWithFallback(deviceID, nil)
+	if err != nil {
+		h.logger.Error("获取设备能力配置失败: %v", err)
+		return
+	}
+
+	if config == nil {
+		h.logger.Info("设备 %s 没有自定义能力配置，使用默认配置", deviceID)
+		return
+	}
+
+	h.logger.Info("设备 %s 使用自定义能力配置，共 %d 个能力", deviceID, len(config.Capabilities))
+
+	// 根据配置创建提供者
+	h.createProvidersFromConfig(config)
+}
+
+// createProvidersFromConfig 根据配置创建提供者
+func (h *ConnectionHandler) createProvidersFromConfig(config *database.DeviceCapabilityConfig) {
+	for _, capability := range config.Capabilities {
+		switch capability.CapabilityName {
+		case "asr":
+			h.createASRProvider(capability)
+		case "llm":
+			h.createLLMProvider(capability)
+		case "tts":
+			h.createTTSProvider(capability)
+		case "vlllm":
+			h.createVLLLMProvider(capability)
+		}
+	}
+}
+
+// createASRProvider 创建ASR提供者
+func (h *ConnectionHandler) createASRProvider(capability database.CapabilityConfig) {
+	asrConfig := &asr.Config{
+		Type: capability.CapabilityType,
+		Data: capability.Config,
+	}
+
+	provider, err := asr.Create(capability.CapabilityType, asrConfig, h.config.DeleteAudio, h.logger)
+	if err != nil {
+		h.logger.Error("创建ASR提供者失败: %v", err)
+		return
+	}
+
+	h.providers.asr = provider
+	h.logger.Info("使用设备自定义ASR提供者: %s/%s (优先级: %d)", 
+		capability.CapabilityName, capability.CapabilityType, capability.Priority)
+}
+
+// createLLMProvider 创建LLM提供者
+func (h *ConnectionHandler) createLLMProvider(capability database.CapabilityConfig) {
+	llmConfig := &llm.Config{
+		Type:        capability.CapabilityType,
+		ModelName:   getStringFromConfig(capability.Config, "model_name"),
+		BaseURL:     getStringFromConfig(capability.Config, "url"),
+		APIKey:      getStringFromConfig(capability.Config, "api_key"),
+		Temperature: getFloatFromConfig(capability.Config, "temperature"),
+		MaxTokens:   getIntFromConfig(capability.Config, "max_tokens"),
+		TopP:        getFloatFromConfig(capability.Config, "top_p"),
+		Extra:       capability.Config,
+	}
+
+	provider, err := llm.Create(capability.CapabilityType, llmConfig)
+	if err != nil {
+		h.logger.Error("创建LLM提供者失败: %v", err)
+		return
+	}
+
+	h.providers.llm = provider
+	h.logger.Info("使用设备自定义LLM提供者: %s/%s (优先级: %d)", 
+		capability.CapabilityName, capability.CapabilityType, capability.Priority)
+}
+
+// createTTSProvider 创建TTS提供者
+func (h *ConnectionHandler) createTTSProvider(capability database.CapabilityConfig) {
+	ttsConfig := &tts.Config{
+		Type:      capability.CapabilityType,
+		Voice:     getStringFromConfig(capability.Config, "voice"),
+		Format:    getStringFromConfig(capability.Config, "format"),
+		OutputDir: getStringFromConfig(capability.Config, "output_dir"),
+		AppID:     getStringFromConfig(capability.Config, "appid"),
+		Token:     getStringFromConfig(capability.Config, "token"),
+		Cluster:   getStringFromConfig(capability.Config, "cluster"),
+	}
+
+	provider, err := tts.Create(capability.CapabilityType, ttsConfig, h.config.DeleteAudio)
+	if err != nil {
+		h.logger.Error("创建TTS提供者失败: %v", err)
+		return
+	}
+
+	h.providers.tts = provider
+	h.logger.Info("使用设备自定义TTS提供者: %s/%s (优先级: %d)", 
+		capability.CapabilityName, capability.CapabilityType, capability.Priority)
+}
+
+// createVLLLMProvider 创建VLLLM提供者
+func (h *ConnectionHandler) createVLLLMProvider(capability database.CapabilityConfig) {
+	vlllmConfig := &configs.VLLMConfig{
+		Type:        capability.CapabilityType,
+		ModelName:   getStringFromConfig(capability.Config, "model_name"),
+		BaseURL:     getStringFromConfig(capability.Config, "url"),
+		APIKey:      getStringFromConfig(capability.Config, "api_key"),
+		Temperature: getFloatFromConfig(capability.Config, "temperature"),
+		MaxTokens:   getIntFromConfig(capability.Config, "max_tokens"),
+		TopP:        getFloatFromConfig(capability.Config, "top_p"),
+	}
+
+	provider, err := vlllm.Create(capability.CapabilityType, vlllmConfig, h.logger)
+	if err != nil {
+		h.logger.Error("创建VLLLM提供者失败: %v", err)
+		return
+	}
+
+	h.providers.vlllm = provider
+	h.logger.Info("使用设备自定义VLLLM提供者: %s/%s (优先级: %d)", 
+		capability.CapabilityName, capability.CapabilityType, capability.Priority)
+}
+
+// 辅助函数：从配置中获取字符串值
+func getStringFromConfig(config map[string]interface{}, key string) string {
+	if config == nil {
+		return ""
+	}
+	if value, ok := config[key]; ok {
+		if str, ok := value.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
+// 辅助函数：从配置中获取浮点数值
+func getFloatFromConfig(config map[string]interface{}, key string) float64 {
+	if config == nil {
+		return 0.0
+	}
+	if value, ok := config[key]; ok {
+		switch v := value.(type) {
+		case float64:
+			return v
+		case float32:
+			return float64(v)
+		case int:
+			return float64(v)
+		case int64:
+			return float64(v)
+		}
+	}
+	return 0.0
+}
+
+// 辅助函数：从配置中获取整数值
+func getIntFromConfig(config map[string]interface{}, key string) int {
+	if config == nil {
+		return 0
+	}
+	if value, ok := config[key]; ok {
+		switch v := value.(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		}
+	}
+	return 0
+}
+
+// extractDeviceID 从请求中提取设备ID
+func extractDeviceID(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	
+	// 从Header中获取设备ID
+	if deviceID := req.Header.Get("Device-Id"); deviceID != "" {
+		return deviceID
+	}
+	
+	// 从URL参数中获取设备ID
+	if deviceID := req.URL.Query().Get("device_id"); deviceID != "" {
+		return deviceID
+	}
+	
+	return ""
+}
+
+// extractClientID 从请求中提取客户端ID
+func extractClientID(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	
+	// 从Header中获取客户端ID
+	if clientID := req.Header.Get("Client-Id"); clientID != "" {
+		return clientID
+	}
+	
+	// 从URL参数中获取客户端ID
+	if clientID := req.URL.Query().Get("client_id"); clientID != "" {
+		return clientID
+	}
+	
+	return ""
+}
+
+// extractHeaders 从请求中提取头部信息
+func extractHeaders(req *http.Request) map[string]string {
+	headers := make(map[string]string)
+	if req == nil {
+		return headers
+	}
+	
+	for key, values := range req.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+	
+	return headers
 }

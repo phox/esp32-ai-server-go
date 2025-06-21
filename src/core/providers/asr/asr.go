@@ -2,6 +2,7 @@ package asr
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -17,7 +18,7 @@ type Config struct {
 
 // Provider ASR提供者接口
 type Provider interface {
-	providers.Provider
+	providers.ASRProvider
 }
 
 // BaseProvider ASR基础实现
@@ -139,4 +140,19 @@ func (p *BaseProvider) InitAudioProcessing() {
 	p.audioBuffer = new(bytes.Buffer)
 	p.silenceThreshold = 0.01 // 默认能量阈值
 	p.silenceDuration = 800   // 默认静音判断时长(ms)
+}
+
+// Transcribe 直接识别音频数据（基础实现）
+func (p *BaseProvider) Transcribe(ctx context.Context, audioData []byte) (string, error) {
+	return "", fmt.Errorf("Transcribe方法需要在具体实现中重写")
+}
+
+// AddAudio 添加音频数据到缓冲区（基础实现）
+func (p *BaseProvider) AddAudio(data []byte) error {
+	return fmt.Errorf("AddAudio方法需要在具体实现中重写")
+}
+
+// Reset 复位ASR状态（基础实现）
+func (p *BaseProvider) Reset() error {
+	return fmt.Errorf("Reset方法需要在具体实现中重写")
 }

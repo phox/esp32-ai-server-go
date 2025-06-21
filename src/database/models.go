@@ -268,3 +268,16 @@ type UpdateDeviceRequest struct {
 	HardwareVersion string `json:"hardware_version"`
 	Status          string `json:"status"`
 }
+
+// AICapabilityRequest AI能力请求
+type AICapabilityRequest struct {
+	Name   string                 `json:"name" binding:"required"`
+	Type   string                 `json:"type" binding:"required"`
+	Config map[string]interface{} `json:"config"`
+}
+
+// DefaultAICapabilityRequest 默认AI能力请求
+type DefaultAICapabilityRequest struct {
+	CapabilityName string `json:"capability_name" binding:"required"`
+	CapabilityType string `json:"capability_type" binding:"required"`
+}

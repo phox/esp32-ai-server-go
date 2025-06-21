@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -85,6 +87,9 @@ func (userApi *UserAPI) RegisterRoutes(r *gin.Engine) {
 		devices.GET("/:id/capabilities", userApi.GetDeviceCapabilities)
 		devices.POST("/:id/capabilities", userApi.SetDeviceCapability)
 		devices.DELETE("/:id/capabilities/:capabilityName/:capabilityType", userApi.RemoveDeviceCapability)
+
+		// 设备AI能力配置（带回退逻辑）
+		devices.GET("/:id/capabilities/with-fallback", userApi.GetDeviceCapabilitiesWithFallback)
 	}
 
 	// AI能力管理路由
@@ -93,6 +98,14 @@ func (userApi *UserAPI) RegisterRoutes(r *gin.Engine) {
 	{
 		capabilities.GET("", userApi.ListCapabilities)
 		capabilities.GET("/:name/:type", userApi.GetCapability)
+		capabilities.POST("", userApi.authMiddleware.AdminRequired(), userApi.CreateCapability)
+		capabilities.PUT("/:name/:type", userApi.authMiddleware.AdminRequired(), userApi.UpdateCapability)
+		capabilities.DELETE("/:name/:type", userApi.authMiddleware.AdminRequired(), userApi.DeleteCapability)
+
+		// 默认能力类型管理
+		capabilities.GET("/defaults", userApi.GetDefaultCapabilities)
+		capabilities.POST("/defaults", userApi.authMiddleware.AdminRequired(), userApi.SetDefaultCapability)
+		capabilities.DELETE("/defaults/:capabilityName", userApi.authMiddleware.AdminRequired(), userApi.RemoveDefaultCapability)
 	}
 }
 
@@ -932,6 +945,63 @@ func (userApi *UserAPI) RemoveDeviceCapability(c *gin.Context) {
 	})
 }
 
+// GetDeviceCapabilitiesWithFallback 获取设备AI能力配置（带回退逻辑）
+// 优先级：设备专属配置 > 用户自定义配置 > 系统默认配置
+func (userApi *UserAPI) GetDeviceCapabilitiesWithFallback(c *gin.Context) {
+	deviceUUID := c.Param("id")
+
+	// 获取当前用户ID（从认证中间件中获取）
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "用户未认证",
+		})
+		return
+	}
+	userObj := user.(*database.User)
+	userID := &userObj.ID
+
+	// 获取设备能力配置（带回退逻辑）
+	config, err := userApi.configService.GetDeviceCapabilityConfigWithFallback(deviceUUID, userID)
+	if err != nil {
+		userApi.logger.Error("获取设备能力配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取设备能力配置失败: " + err.Error(),
+		})
+		return
+	}
+
+	// 构建响应数据，包含优先级信息
+	type CapabilityWithPriority struct {
+		database.CapabilityConfig
+		PrioritySource string `json:"priority_source"` // "device", "user", "system"
+	}
+
+	capabilitiesWithPriority := make([]CapabilityWithPriority, 0)
+	for _, cap := range config.Capabilities {
+		prioritySource := "device"
+		if cap.Priority == 100 {
+			prioritySource = "user"
+		} else if cap.Priority == 200 {
+			prioritySource = "system"
+		}
+
+		capWithPriority := CapabilityWithPriority{
+			CapabilityConfig: cap,
+			PrioritySource:   prioritySource,
+		}
+		capabilitiesWithPriority = append(capabilitiesWithPriority, capWithPriority)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"device_id":      config.DeviceID,
+			"capabilities":   capabilitiesWithPriority,
+			"global_configs": config.GlobalConfigs,
+		},
+	})
+}
+
 // ListCapabilities 获取AI能力列表
 func (userApi *UserAPI) ListCapabilities(c *gin.Context) {
 	capabilityType := c.Query("type")
@@ -982,4 +1052,186 @@ func (userApi *UserAPI) GetCapability(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": capability,
 	})
-} 
+}
+
+// CreateCapability 创建AI能力
+func (userApi *UserAPI) CreateCapability(c *gin.Context) {
+	var req database.AICapabilityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误",
+		})
+		return
+	}
+
+	// 创建AI能力对象
+	capability := &database.AICapability{
+		CapabilityName: req.Name,
+		CapabilityType: req.Type,
+		DisplayName:    req.Name,
+		Description:    fmt.Sprintf("%s %s 能力", req.Name, req.Type),
+		IsGlobal:       false,
+		IsActive:       true,
+	}
+
+	// 如果有配置数据，序列化为JSON
+	if req.Config != nil {
+		configJSON, err := json.Marshal(req.Config)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "配置数据格式错误",
+			})
+			return
+		}
+		capability.ConfigSchema = configJSON
+	}
+
+	err := userApi.configService.CreateAICapability(capability)
+	if err != nil {
+		userApi.logger.Error("创建AI能力失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "创建AI能力失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "AI能力创建成功",
+	})
+}
+
+// UpdateCapability 更新AI能力
+func (userApi *UserAPI) UpdateCapability(c *gin.Context) {
+	capabilityName := c.Param("name")
+	capabilityType := c.Param("type")
+
+	var req database.AICapabilityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误",
+		})
+		return
+	}
+
+	// 获取现有能力
+	capability, err := userApi.configService.GetAICapability(capabilityName, capabilityType)
+	if err != nil {
+		userApi.logger.Error("获取AI能力失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取AI能力失败",
+		})
+		return
+	}
+
+	if capability == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "AI能力不存在",
+		})
+		return
+	}
+
+	// 更新字段
+	if req.Name != "" {
+		capability.DisplayName = req.Name
+	}
+	if req.Config != nil {
+		configJSON, err := json.Marshal(req.Config)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "配置数据格式错误",
+			})
+			return
+		}
+		capability.ConfigSchema = configJSON
+	}
+
+	err = userApi.configService.UpdateAICapability(capability)
+	if err != nil {
+		userApi.logger.Error("更新AI能力失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "更新AI能力失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "AI能力更新成功",
+	})
+}
+
+// DeleteCapability 删除AI能力
+func (userApi *UserAPI) DeleteCapability(c *gin.Context) {
+	capabilityName := c.Param("name")
+	capabilityType := c.Param("type")
+
+	err := userApi.configService.DeleteAICapability(capabilityName, capabilityType)
+	if err != nil {
+		userApi.logger.Error("删除AI能力失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "删除AI能力失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "AI能力删除成功",
+	})
+}
+
+// GetDefaultCapabilities 获取默认AI能力列表
+func (userApi *UserAPI) GetDefaultCapabilities(c *gin.Context) {
+	capabilities, err := userApi.configService.ListDefaultAICapabilities()
+	if err != nil {
+		userApi.logger.Error("获取默认AI能力列表失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取默认AI能力列表失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": capabilities,
+	})
+}
+
+// SetDefaultCapability 设置默认AI能力
+func (userApi *UserAPI) SetDefaultCapability(c *gin.Context) {
+	var req database.DefaultAICapabilityRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误",
+		})
+		return
+	}
+
+	err := userApi.configService.SetDefaultAICapability(req.CapabilityName, req.CapabilityType)
+	if err != nil {
+		userApi.logger.Error("设置默认AI能力失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "设置默认AI能力失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "默认AI能力设置成功",
+	})
+}
+
+// RemoveDefaultCapability 移除默认AI能力
+func (userApi *UserAPI) RemoveDefaultCapability(c *gin.Context) {
+	capabilityName := c.Param("capabilityName")
+
+	err := userApi.configService.RemoveDefaultAICapability(capabilityName)
+	if err != nil {
+		userApi.logger.Error("移除默认AI能力失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "移除默认AI能力失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "默认AI能力移除成功",
+	})
+}

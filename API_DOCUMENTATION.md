@@ -177,24 +177,46 @@ DELETE /api/users/{id}/capabilities/{capabilityName}/{capabilityType}
 Authorization: Bearer <token>
 ```
 
-## 设备管理API
+## 设备管理
 
-### 1. 获取设备列表
-```http
-GET /api/devices?offset=0&limit=20&status=active
-Authorization: Bearer <token>
+### 获取设备列表
+- **GET** `/api/devices`
+- **描述**: 获取所有设备列表
+- **权限**: 需要认证
+- **响应**:
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "device_uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "oui": "12345678",
+      "sn": "SN001",
+      "device_name": "ESP32设备1",
+      "device_type": "esp32",
+      "device_model": "ESP32-WROOM-32",
+      "firmware_version": "1.0.0",
+      "hardware_version": "1.0",
+      "status": "online",
+      "last_online_time": "2024-01-01T12:00:00Z",
+      "last_ip_address": "192.168.1.100",
+      "created_at": "2024-01-01T10:00:00Z",
+      "updated_at": "2024-01-01T12:00:00Z"
+    }
+  ]
+}
 ```
 
-### 2. 创建设备
-```http
-POST /api/devices
-Authorization: Bearer <token>
-Content-Type: application/json
-
+### 创建设备
+- **POST** `/api/devices`
+- **描述**: 创建新设备
+- **权限**: 需要认证
+- **请求体**:
+```json
 {
   "oui": "12345678",
-  "sn": "ESP32WROOM32001",
-  "device_name": "ESP32设备",
+  "sn": "SN001",
+  "device_name": "ESP32设备1",
   "device_type": "esp32",
   "device_model": "ESP32-WROOM-32",
   "firmware_version": "1.0.0",
@@ -202,81 +224,214 @@ Content-Type: application/json
 }
 ```
 
-### 3. 获取设备信息
-```http
-GET /api/devices/{deviceUUID}
-Authorization: Bearer <token>
-```
+### 获取设备详情
+- **GET** `/api/devices/:id`
+- **描述**: 根据设备UUID获取设备详情
+- **权限**: 需要认证
 
-### 4. 根据OUI和SN获取设备信息
-```http
-GET /api/devices/oui/{oui}/sn/{sn}
-Authorization: Bearer <token>
-```
+### 根据OUI和SN获取设备
+- **GET** `/api/devices/oui/:oui/sn/:sn`
+- **描述**: 根据OUI和SN获取设备详情
+- **权限**: 需要认证
 
-### 5. 更新设备信息
-```http
-PUT /api/devices/{deviceUUID}
-Authorization: Bearer <token>
-Content-Type: application/json
-
+### 更新设备
+- **PUT** `/api/devices/:id`
+- **描述**: 更新设备信息
+- **权限**: 需要认证
+- **请求体**:
+```json
 {
-  "device_name": "新设备名称",
-  "status": "active"
+  "device_name": "ESP32设备1-更新",
+  "device_type": "esp32",
+  "device_model": "ESP32-WROOM-32",
+  "firmware_version": "1.1.0",
+  "hardware_version": "1.0",
+  "status": "online"
 }
 ```
 
-### 6. 删除设备
-```http
-DELETE /api/devices/{deviceUUID}
-Authorization: Bearer <token>
-```
+### 删除设备
+- **DELETE** `/api/devices/:id`
+- **描述**: 删除设备
+- **权限**: 需要认证
 
-## 设备AI能力配置API
-
-### 1. 获取设备AI能力配置
-```http
-GET /api/devices/{deviceUUID}/capabilities
-Authorization: Bearer <token>
-```
-
-### 2. 设置设备AI能力配置
-```http
-POST /api/devices/{deviceUUID}/capabilities
-Authorization: Bearer <token>
-Content-Type: application/json
-
+### 获取设备AI能力配置
+- **GET** `/api/devices/:id/capabilities`
+- **描述**: 获取设备的AI能力配置
+- **权限**: 需要认证
+- **响应**:
+```json
 {
-  "capability_name": "ASR",
-  "capability_type": "doubao",
+  "data": [
+    {
+      "id": 1,
+      "device_id": 1,
+      "capability_id": 1,
+      "priority": 1,
+      "config_data": {
+        "api_key": "sk-xxx",
+        "model": "gpt-3.5-turbo"
+      },
+      "is_enabled": true,
+      "capability": {
+        "capability_name": "llm",
+        "capability_type": "openai",
+        "display_name": "OpenAI LLM",
+        "description": "OpenAI语言模型"
+      }
+    }
+  ]
+}
+```
+
+### 获取设备AI能力配置（带回退逻辑）
+- **GET** `/api/devices/:id/capabilities/with-fallback`
+- **描述**: 获取设备的AI能力配置，如果设备没有配置则回退到用户自定义或系统默认配置
+- **权限**: 需要认证
+- **优先级**: 设备专属配置 > 用户自定义配置 > 系统默认配置
+- **响应**:
+```json
+{
+  "data": {
+    "device_id": 1,
+    "capabilities": [
+      {
+        "capability_name": "llm",
+        "capability_type": "openai",
+        "config": {
+          "api_key": "sk-xxx",
+          "model": "gpt-3.5-turbo"
+        },
+        "priority": 1,
+        "is_enabled": true,
+        "priority_source": "device"
+      },
+      {
+        "capability_name": "tts",
+        "capability_type": "edge",
+        "config": {
+          "voice": "zh-CN-XiaoxiaoNeural"
+        },
+        "priority": 100,
+        "is_enabled": true,
+        "priority_source": "user"
+      }
+    ],
+    "global_configs": {
+      "default.asr": "gosherpa",
+      "default.llm": "openai"
+    }
+  }
+}
+```
+
+### 设置设备AI能力配置
+- **POST** `/api/devices/:id/capabilities`
+- **描述**: 设置设备的AI能力配置
+- **权限**: 需要认证
+- **请求体**:
+```json
+{
+  "capability_name": "llm",
+  "capability_type": "openai",
   "priority": 1,
   "config": {
-    "appid": "your_appid",
-    "access_token": "your_token"
+    "api_key": "sk-xxx",
+    "model": "gpt-3.5-turbo",
+    "temperature": 0.7
   },
   "is_enabled": true
 }
 ```
 
-### 3. 移除设备AI能力配置
-```http
-DELETE /api/devices/{deviceUUID}/capabilities/{capabilityName}/{capabilityType}
-Authorization: Bearer <token>
+### 移除设备AI能力配置
+- **DELETE** `/api/devices/:id/capabilities/:capabilityName/:capabilityType`
+- **描述**: 移除设备的AI能力配置
+- **权限**: 需要认证
+
+## AI能力管理
+
+### 获取AI能力列表
+- **GET** `/api/capabilities?type=llm&enabled=true`
+- **描述**: 获取AI能力列表
+- **权限**: 需要认证
+- **查询参数**:
+  - `type`: 能力类型（可选）
+  - `enabled`: 是否启用（可选，true/false）
+
+### 获取AI能力详情
+- **GET** `/api/capabilities/:name/:type`
+- **描述**: 获取AI能力详情
+- **权限**: 需要认证
+
+### 创建AI能力
+- **POST** `/api/capabilities`
+- **描述**: 创建新的AI能力
+- **权限**: 需要管理员权限
+- **请求体**:
+```json
+{
+  "name": "llm",
+  "type": "openai",
+  "config": {
+    "api_key": "sk-xxx",
+    "model": "gpt-3.5-turbo"
+  }
+}
 ```
 
-## AI能力管理API
-
-### 1. 获取AI能力列表
-```http
-GET /api/capabilities
-Authorization: Bearer <token>
+### 更新AI能力
+- **PUT** `/api/capabilities/:name/:type`
+- **描述**: 更新AI能力配置
+- **权限**: 需要管理员权限
+- **请求体**:
+```json
+{
+  "name": "llm",
+  "type": "openai",
+  "config": {
+    "api_key": "sk-xxx",
+    "model": "gpt-4"
+  }
+}
 ```
 
-### 2. 获取AI能力详情
-```http
-GET /api/capabilities/{name}/{type}
-Authorization: Bearer <token>
+### 删除AI能力
+- **DELETE** `/api/capabilities/:name/:type`
+- **描述**: 删除AI能力（软删除，设置为非活跃状态）
+- **权限**: 需要管理员权限
+
+### 获取默认AI能力列表
+- **GET** `/api/capabilities/defaults`
+- **描述**: 获取系统默认的AI能力类型配置
+- **权限**: 需要认证
+- **响应**:
+```json
+{
+  "data": {
+    "asr": "gosherpa",
+    "llm": "openai",
+    "tts": "edge"
+  }
+}
 ```
+
+### 设置默认AI能力
+- **POST** `/api/capabilities/defaults`
+- **描述**: 设置系统默认的AI能力类型
+- **权限**: 需要管理员权限
+- **请求体**:
+```json
+{
+  "capability_name": "llm",
+  "capability_type": "openai"
+}
+```
+
+### 移除默认AI能力
+- **DELETE** `/api/capabilities/defaults/:capabilityName`
+- **描述**: 移除系统默认的AI能力类型
+- **权限**: 需要管理员权限
 
 ## 认证相关API
 
