@@ -7,7 +7,6 @@ import (
 	"image"
 	"strings"
 
-	"ai-server-go/src/configs"
 	"ai-server-go/src/core/utils"
 
 	_ "image/gif"  // 注册GIF解码器
@@ -19,12 +18,12 @@ import (
 
 // ImageSecurityValidator 图片安全验证器
 type ImageSecurityValidator struct {
-	config *configs.SecurityConfig
+	config *SecurityConfig
 	logger *utils.Logger
 }
 
 // NewImageSecurityValidator 创建新的图片安全验证器
-func NewImageSecurityValidator(config *configs.SecurityConfig, logger *utils.Logger) *ImageSecurityValidator {
+func NewImageSecurityValidator(config *SecurityConfig, logger *utils.Logger) *ImageSecurityValidator {
 	return &ImageSecurityValidator{
 		config: config,
 		logger: logger,

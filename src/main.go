@@ -14,6 +14,7 @@ import (
 	"ai-server-go/src/configs"
 	"ai-server-go/src/core"
 	"ai-server-go/src/core/auth"
+	"ai-server-go/src/core/pool"
 	"ai-server-go/src/core/utils"
 	"ai-server-go/src/database"
 	"ai-server-go/src/ota"
@@ -51,9 +52,9 @@ func LoadConfigAndLogger() (*configs.Config, *utils.Logger, error) {
 	return config, logger, nil
 }
 
-func StartWSServer(config *configs.Config, logger *utils.Logger, g *errgroup.Group, groupCtx context.Context) (*core.WebSocketServer, error) {
+func StartWSServer(config *configs.Config, logger *utils.Logger, g *errgroup.Group, groupCtx context.Context, configService *database.ConfigService) (*core.WebSocketServer, error) {
 	// 创建 WebSocket 服务
-	wsServer, err := core.NewWebSocketServer(config, logger)
+	wsServer, err := core.NewWebSocketServer(config, logger, configService)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +86,7 @@ func StartWSServer(config *configs.Config, logger *utils.Logger, g *errgroup.Gro
 	return wsServer, nil
 }
 
-func StartHttpServer(config *configs.Config, logger *utils.Logger, g *errgroup.Group, groupCtx context.Context) (*http.Server, error) {
+func StartHttpServer(config *configs.Config, logger *utils.Logger, g *errgroup.Group, groupCtx context.Context, configService *database.ConfigService) (*http.Server, error) {
 	// 初始化Gin引擎
 	if config.Log.LogLevel == "debug" {
 		gin.SetMode(gin.DebugMode)
@@ -106,11 +107,27 @@ func StartHttpServer(config *configs.Config, logger *utils.Logger, g *errgroup.G
 	// 初始化服务
 	userService := database.NewUserService(db, logger)
 	deviceService := database.NewDeviceService(db, logger)
-	configService := database.NewConfigService(db, logger)
 	authMiddleware := auth.NewAuthMiddleware(userService, logger)
 
-	// 初始化用户管理API
-	userAPI := api.NewUserAPI(userService, deviceService, configService, authMiddleware, logger)
+	// 从数据库查找 is_default=true 的 provider 作为 defaultModules
+	defaultModules, err := configService.GetDefaultProviderModules()
+	if err != nil {
+		logger.Error("获取默认Provider模块失败: %v", err)
+		return nil, err
+	}
+	// deleteAudio 默认 true
+	deleteAudio := true
+
+	// 创建资源池管理器
+	poolManager, err := pool.NewPoolManager(config, logger, defaultModules, deleteAudio, configService)
+	if err != nil {
+		logger.Error("创建资源池管理器失败: %v", err)
+		return nil, err
+	}
+	defer poolManager.Close()
+
+	// 创建用户管理API
+	userAPI := api.NewUserAPI(userService, deviceService, configService, authMiddleware, logger, poolManager)
 	userAPI.RegisterRoutes(router)
 
 	// API路由全部挂载到/api前缀下
@@ -123,7 +140,7 @@ func StartHttpServer(config *configs.Config, logger *utils.Logger, g *errgroup.G
 	}
 
 	// 启动Vision服务
-	visionService, err := vision.NewDefaultVisionService(config, logger)
+	visionService, err := vision.NewDefaultVisionService(config, logger, configService)
 	if err != nil {
 		logger.Error("Vision 服务初始化失败 %v", err)
 		return nil, err
@@ -202,13 +219,29 @@ func GracefulShutdown(cancel context.CancelFunc, logger *utils.Logger, g *errgro
 }
 
 func startServices(config *configs.Config, logger *utils.Logger, g *errgroup.Group, groupCtx context.Context) error {
+	// 初始化数据库连接
+	db, err := database.NewDatabase(&config.Database, logger)
+	if err != nil {
+		logger.Error("数据库连接失败: %v", err)
+		return err
+	}
+	defer db.Close()
+
+	// 初始化系统配置
+	configService := database.NewConfigService(db, logger)
+	if err := configService.InitializeDefaultSystemConfigs(); err != nil {
+		logger.Error("初始化默认系统配置失败: %v", err)
+		return err
+	}
+	logger.Info("默认系统配置初始化完成")
+
 	// 启动 WebSocket 服务
-	if _, err := StartWSServer(config, logger, g, groupCtx); err != nil {
+	if _, err := StartWSServer(config, logger, g, groupCtx, configService); err != nil {
 		return fmt.Errorf("启动 WebSocket 服务失败: %w", err)
 	}
 
 	// 启动 Http 服务
-	if _, err := StartHttpServer(config, logger, g, groupCtx); err != nil {
+	if _, err := StartHttpServer(config, logger, g, groupCtx, configService); err != nil {
 		return fmt.Errorf("启动 Http 服务失败: %w", err)
 	}
 

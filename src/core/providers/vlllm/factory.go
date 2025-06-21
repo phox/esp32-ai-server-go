@@ -3,7 +3,6 @@ package vlllm
 import (
 	"fmt"
 
-	"ai-server-go/src/configs"
 	"ai-server-go/src/core/utils"
 )
 
@@ -20,7 +19,7 @@ func Register(name string, factory Factory) {
 }
 
 // Create 创建VLLLM提供者实例
-func Create(name string, vlllmConfig *configs.VLLMConfig, logger *utils.Logger) (*Provider, error) {
+func Create(name string, vlllmConfig *VLLLMConfig, logger *utils.Logger) (*Provider, error) {
 	factory, ok := factories[name]
 	if !ok {
 		return nil, fmt.Errorf("未知的VLLLM提供者: %s", name)

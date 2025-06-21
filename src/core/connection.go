@@ -241,7 +241,15 @@ func NewConnectionHandler(
 
 	// 初始化对话管理器
 	handler.dialogueManager = chat.NewDialogueManager(handler.logger, nil)
-	handler.dialogueManager.SetSystemMessage(config.DefaultPrompt)
+
+	// 从数据库获取默认提示词
+	defaultPrompt, err := handler.configService.GetSystemConfigValue("prompt", "default_prompt")
+	if err != nil {
+		handler.logger.Error("获取默认提示词失败: %v", err)
+		defaultPrompt = "你是一个友好的AI助手"
+	}
+	handler.dialogueManager.SetSystemMessage(defaultPrompt)
+
 	handler.functionRegister = function.NewFunctionRegistry()
 	handler.initMCPResultHandlers()
 
@@ -436,8 +444,19 @@ func (h *ConnectionHandler) clientAbortChat() error {
 }
 
 func (h *ConnectionHandler) QuitIntent(text string) bool {
-	//CMD_exit 读取配置中的退出命令
-	exitCommands := h.config.CMDExit
+	// 从数据库获取退出命令配置
+	exitCommandsStr, err := h.configService.GetSystemConfigValue("system", "exit_commands")
+	if err != nil {
+		h.logger.Error("获取退出命令配置失败: %v", err)
+		return false
+	}
+
+	var exitCommands []string
+	if err := json.Unmarshal([]byte(exitCommandsStr), &exitCommands); err != nil {
+		h.logger.Error("解析退出命令配置失败: %v", err)
+		return false
+	}
+
 	if exitCommands == nil {
 		return false
 	}
@@ -456,16 +475,29 @@ func (h *ConnectionHandler) QuitIntent(text string) bool {
 }
 
 func (h *ConnectionHandler) quickReplyWakeUpWords(text string) bool {
+	// 从数据库获取快速回复配置
+	quickReply, err := h.configService.GetSystemConfigBool("audio", "quick_reply")
+	if err != nil {
+		h.logger.Error("获取快速回复配置失败: %v", err)
+		return false
+	}
+
 	// 检查是否包含唤醒词
-	if !h.config.QuickReply || h.talkRound != 1 {
+	if !quickReply || h.talkRound != 1 {
 		return false
 	}
 	if !utils.IsWakeUpWord(text) {
 		return false
 	}
 
-	repalyWords := h.config.QuickReplyWords
-	reply_text := utils.RandomSelectFromArray(repalyWords)
+	// 从数据库获取快速回复词汇
+	quickReplyWords, err := h.configService.GetSystemConfigArray("audio", "quick_reply_words")
+	if err != nil {
+		h.logger.Error("获取快速回复词汇失败: %v", err)
+		return false
+	}
+
+	reply_text := utils.RandomSelectFromArray(quickReplyWords)
 	h.tts_last_text_index = 1 // 重置文本索引
 	h.SpeakAndPlay(reply_text, 1, h.talkRound)
 
@@ -840,7 +872,14 @@ func (h *ConnectionHandler) stopServerSpeak() {
 }
 
 func (h *ConnectionHandler) deleteAudioFileIfNeeded(filepath string, reason string) {
-	if !h.config.DeleteAudio || filepath == "" {
+	// 从数据库获取是否删除音频文件配置
+	deleteAudio, err := h.configService.GetSystemConfigBool("audio", "delete_audio")
+	if err != nil {
+		h.logger.Error("获取删除音频配置失败: %v", err)
+		return
+	}
+
+	if !deleteAudio || filepath == "" {
 		return
 	}
 
@@ -870,7 +909,11 @@ func (h *ConnectionHandler) processTTSTask(text string, textIndex int, round int
 		}{filepath, text, round, textIndex}
 	}()
 
-	if utils.IsQuickReplyHit(text, h.config.QuickReplyWords) {
+	// 从数据库获取快速回复词汇
+	quickReplyWords, err := h.configService.GetSystemConfigArray("audio", "quick_reply_words")
+	if err != nil {
+		h.logger.Error("获取快速回复词汇失败: %v", err)
+	} else if utils.IsQuickReplyHit(text, quickReplyWords) {
 		// 尝试从缓存查找音频文件
 		if cachedFile := h.quickReplyCache.FindCachedAudio(text); cachedFile != "" {
 			h.LogInfo(fmt.Sprintf("使用缓存的快速回复音频: %s", cachedFile))
@@ -878,6 +921,7 @@ func (h *ConnectionHandler) processTTSTask(text string, textIndex int, round int
 			return
 		}
 	}
+
 	ttsStartTime := time.Now()
 	// 过滤表情
 	text = utils.RemoveAllEmoji(text)
@@ -888,14 +932,14 @@ func (h *ConnectionHandler) processTTSTask(text string, textIndex int, round int
 	}
 
 	// 生成语音文件
-	filepath, err := h.providers.tts.ToTTS(text)
+	filepath, err = h.providers.tts.ToTTS(text)
 	if err != nil {
 		h.logger.Error(fmt.Sprintf("TTS转换失败:text(%s) %v", text, err))
 		return
 	} else {
 		h.logger.Debug(fmt.Sprintf("TTS转换成功: text(%s), index(%d) %s", text, textIndex, filepath))
 		// 如果是快速回复词，保存到缓存
-		if utils.IsQuickReplyHit(text, h.config.QuickReplyWords) {
+		if utils.IsQuickReplyHit(text, quickReplyWords) {
 			if err := h.quickReplyCache.SaveCachedAudio(text, filepath); err != nil {
 				h.logger.Error(fmt.Sprintf("保存快速回复音频失败: %v", err))
 			} else {
@@ -1138,14 +1182,21 @@ func (h *ConnectionHandler) createASRProvider(capability database.CapabilityConf
 		Data: capability.Config,
 	}
 
-	provider, err := asr.Create(capability.CapabilityType, asrConfig, h.config.DeleteAudio, h.logger)
+	// 从数据库获取是否删除音频文件配置
+	deleteAudio, err := h.configService.GetSystemConfigBool("audio", "delete_audio")
+	if err != nil {
+		h.logger.Error("获取删除音频配置失败: %v", err)
+		deleteAudio = true // 默认删除
+	}
+
+	provider, err := asr.Create(capability.CapabilityType, asrConfig, deleteAudio, h.logger)
 	if err != nil {
 		h.logger.Error("创建ASR提供者失败: %v", err)
 		return
 	}
 
 	h.providers.asr = provider
-	h.logger.Info("使用设备自定义ASR提供者: %s/%s (优先级: %d)", 
+	h.logger.Info("使用设备自定义ASR提供者: %s/%s (优先级: %d)",
 		capability.CapabilityName, capability.CapabilityType, capability.Priority)
 }
 
@@ -1169,7 +1220,7 @@ func (h *ConnectionHandler) createLLMProvider(capability database.CapabilityConf
 	}
 
 	h.providers.llm = provider
-	h.logger.Info("使用设备自定义LLM提供者: %s/%s (优先级: %d)", 
+	h.logger.Info("使用设备自定义LLM提供者: %s/%s (优先级: %d)",
 		capability.CapabilityName, capability.CapabilityType, capability.Priority)
 }
 
@@ -1185,20 +1236,34 @@ func (h *ConnectionHandler) createTTSProvider(capability database.CapabilityConf
 		Cluster:   getStringFromConfig(capability.Config, "cluster"),
 	}
 
-	provider, err := tts.Create(capability.CapabilityType, ttsConfig, h.config.DeleteAudio)
+	// 从数据库获取是否删除音频文件配置
+	deleteAudio, err := h.configService.GetSystemConfigBool("audio", "delete_audio")
+	if err != nil {
+		h.logger.Error("获取删除音频配置失败: %v", err)
+		deleteAudio = true // 默认删除
+	}
+
+	provider, err := tts.Create(capability.CapabilityType, ttsConfig, deleteAudio)
 	if err != nil {
 		h.logger.Error("创建TTS提供者失败: %v", err)
 		return
 	}
 
 	h.providers.tts = provider
-	h.logger.Info("使用设备自定义TTS提供者: %s/%s (优先级: %d)", 
+	h.logger.Info("使用设备自定义TTS提供者: %s/%s (优先级: %d)",
 		capability.CapabilityName, capability.CapabilityType, capability.Priority)
 }
 
 // createVLLLMProvider 创建VLLLM提供者
 func (h *ConnectionHandler) createVLLLMProvider(capability database.CapabilityConfig) {
-	vlllmConfig := &configs.VLLMConfig{
+	var security vlllm.SecurityConfig
+	if sec, ok := capability.Config["security"]; ok && sec != nil {
+		if secMap, ok := sec.(map[string]interface{}); ok {
+			securityBytes, _ := json.Marshal(secMap)
+			_ = json.Unmarshal(securityBytes, &security)
+		}
+	}
+	vlllmConfig := &vlllm.VLLLMConfig{
 		Type:        capability.CapabilityType,
 		ModelName:   getStringFromConfig(capability.Config, "model_name"),
 		BaseURL:     getStringFromConfig(capability.Config, "url"),
@@ -1206,6 +1271,8 @@ func (h *ConnectionHandler) createVLLLMProvider(capability database.CapabilityCo
 		Temperature: getFloatFromConfig(capability.Config, "temperature"),
 		MaxTokens:   getIntFromConfig(capability.Config, "max_tokens"),
 		TopP:        getFloatFromConfig(capability.Config, "top_p"),
+		Security:    security,
+		Extra:       capability.Config,
 	}
 
 	provider, err := vlllm.Create(capability.CapabilityType, vlllmConfig, h.logger)
@@ -1215,7 +1282,7 @@ func (h *ConnectionHandler) createVLLLMProvider(capability database.CapabilityCo
 	}
 
 	h.providers.vlllm = provider
-	h.logger.Info("使用设备自定义VLLLM提供者: %s/%s (优先级: %d)", 
+	h.logger.Info("使用设备自定义VLLLM提供者: %s/%s (优先级: %d)",
 		capability.CapabilityName, capability.CapabilityType, capability.Priority)
 }
 
@@ -1275,17 +1342,17 @@ func extractDeviceID(req *http.Request) string {
 	if req == nil {
 		return ""
 	}
-	
+
 	// 从Header中获取设备ID
 	if deviceID := req.Header.Get("Device-Id"); deviceID != "" {
 		return deviceID
 	}
-	
+
 	// 从URL参数中获取设备ID
 	if deviceID := req.URL.Query().Get("device_id"); deviceID != "" {
 		return deviceID
 	}
-	
+
 	return ""
 }
 
@@ -1294,17 +1361,17 @@ func extractClientID(req *http.Request) string {
 	if req == nil {
 		return ""
 	}
-	
+
 	// 从Header中获取客户端ID
 	if clientID := req.Header.Get("Client-Id"); clientID != "" {
 		return clientID
 	}
-	
+
 	// 从URL参数中获取客户端ID
 	if clientID := req.URL.Query().Get("client_id"); clientID != "" {
 		return clientID
 	}
-	
+
 	return ""
 }
 
@@ -1314,12 +1381,12 @@ func extractHeaders(req *http.Request) map[string]string {
 	if req == nil {
 		return headers
 	}
-	
+
 	for key, values := range req.Header {
 		if len(values) > 0 {
 			headers[key] = values[0]
 		}
 	}
-	
+
 	return headers
 }

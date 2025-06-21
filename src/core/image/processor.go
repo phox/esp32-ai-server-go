@@ -12,15 +12,38 @@ import (
 	"sync/atomic"
 	"time"
 
-	"ai-server-go/src/configs"
 	"ai-server-go/src/core/utils"
 
 	"github.com/google/uuid"
 )
 
+// SecurityConfig 图片安全配置结构（本地定义）
+type SecurityConfig struct {
+	MaxFileSize       int64    `json:"max_file_size"`
+	MaxPixels         int64    `json:"max_pixels"`
+	MaxWidth          int      `json:"max_width"`
+	MaxHeight         int      `json:"max_height"`
+	AllowedFormats    []string `json:"allowed_formats"`
+	EnableDeepScan    bool     `json:"enable_deep_scan"`
+	ValidationTimeout string   `json:"validation_timeout"`
+}
+
+// VLLLMConfig VLLLM配置结构（本地定义）
+type VLLLMConfig struct {
+	Type        string         `json:"type"`
+	ModelName   string         `json:"model_name"`
+	BaseURL     string         `json:"url"`
+	APIKey      string         `json:"api_key"`
+	Temperature float64        `json:"temperature"`
+	MaxTokens   int            `json:"max_tokens"`
+	TopP        float64        `json:"top_p"`
+	Security    SecurityConfig `json:"security"`
+	Extra       map[string]interface{} `json:"extra"`
+}
+
 // ImageProcessor 图片处理器
 type ImageProcessor struct {
-	config     *configs.VLLMConfig
+	config     *VLLLMConfig
 	validator  *ImageSecurityValidator
 	logger     *utils.Logger
 	tempDir    string
@@ -29,7 +52,7 @@ type ImageProcessor struct {
 }
 
 // NewImageProcessor 创建新的图片处理器
-func NewImageProcessor(config *configs.VLLMConfig, logger *utils.Logger) (*ImageProcessor, error) {
+func NewImageProcessor(config *VLLLMConfig, logger *utils.Logger) (*ImageProcessor, error) {
 	// 创建临时目录
 	tempDir := filepath.Join("tmp", "images")
 	if err := os.MkdirAll(tempDir, 0755); err != nil {

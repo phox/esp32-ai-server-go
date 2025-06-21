@@ -11,6 +11,7 @@ import (
 	"ai-server-go/src/core/pool"
 	"ai-server-go/src/core/utils"
 	"ai-server-go/src/task"
+	"ai-server-go/src/database"
 
 	"github.com/gorilla/websocket"
 )
@@ -32,7 +33,7 @@ type Upgrader interface {
 }
 
 // NewWebSocketServer 创建新的WebSocket服务器
-func NewWebSocketServer(config *configs.Config, logger *utils.Logger) (*WebSocketServer, error) {
+func NewWebSocketServer(config *configs.Config, logger *utils.Logger, configService *database.ConfigService) (*WebSocketServer, error) {
 	ws := &WebSocketServer{
 		config:   config,
 		logger:   logger,
@@ -46,8 +47,18 @@ func NewWebSocketServer(config *configs.Config, logger *utils.Logger) (*WebSocke
 			return tm
 		}(),
 	}
+
+	// 从数据库获取默认配置
+	defaultModules := map[string]string{
+		"ASR":   "DoubaoASR",
+		"TTS":   "EdgeTTS",
+		"LLM":   "OllamaLLM",
+		"VLLLM": "ChatGLMVLLM",
+	}
+	deleteAudio := true
+
 	// 初始化资源池管理器
-	poolManager, err := pool.NewPoolManager(config, logger)
+	poolManager, err := pool.NewPoolManager(config, logger, defaultModules, deleteAudio, configService)
 	if err != nil {
 		logger.Error(fmt.Sprintf("初始化资源池管理器失败: %v", err))
 		return nil, fmt.Errorf("初始化资源池管理器失败: %v", err)

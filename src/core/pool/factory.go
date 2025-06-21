@@ -9,12 +9,14 @@ import (
 	"ai-server-go/src/core/providers/tts"
 	"ai-server-go/src/core/providers/vlllm"
 	"ai-server-go/src/core/utils"
+	"ai-server-go/src/database"
+	"encoding/json"
 	"fmt"
 )
 
 /*
 * 工厂类，用于创建不同类型的资源池工厂。
-* 通过配置文件和提供者类型，动态创建资源池工厂。
+* 通过数据库配置和提供者类型，动态创建资源池工厂。
 * 支持ASR、LLM、TTS和VLLLM等多种提供者类型。
 * 每个工厂实现了ResourceFactory接口，提供Create和Destroy方法。
  */
@@ -25,6 +27,8 @@ type ProviderFactory struct {
 	config       interface{}
 	logger       *utils.Logger
 	params       map[string]interface{} // 可选参数
+	configService *database.ConfigService // 数据库配置服务
+	grayscaleManager *GrayscaleManager // 灰度发布管理器
 }
 
 func (f *ProviderFactory) Create() (interface{}, error) {
@@ -45,6 +49,19 @@ func (f *ProviderFactory) Destroy(resource interface{}) error {
 	return nil
 }
 
+// VLLLMConfig VLLLM配置结构（本地定义，避免循环依赖）
+type VLLLMConfig struct {
+	Type        string                 `json:"type"`
+	ModelName   string                 `json:"model_name"`
+	BaseURL     string                 `json:"url"`
+	APIKey      string                 `json:"api_key"`
+	Temperature float64                `json:"temperature"`
+	MaxTokens   int                    `json:"max_tokens"`
+	TopP        float64                `json:"top_p"`
+	Security    map[string]interface{} `json:"security"`
+	Extra       map[string]interface{} `json:"extra"`
+}
+
 func (f *ProviderFactory) createProvider() (interface{}, error) {
 	switch f.providerType {
 	case "asr":
@@ -62,7 +79,7 @@ func (f *ProviderFactory) createProvider() (interface{}, error) {
 		delete_audio, _ := params["delete_audio"].(bool)
 		return tts.Create(cfg.Type, cfg, delete_audio)
 	case "vlllm":
-		cfg := f.config.(*configs.VLLMConfig)
+		cfg := f.config.(*vlllm.VLLLMConfig)
 		return vlllm.Create(cfg.Type, cfg, f.logger)
 	case "mcp":
 		_ = f.config.(*configs.Config)
@@ -74,76 +91,154 @@ func (f *ProviderFactory) createProvider() (interface{}, error) {
 }
 
 // 创建各类型工厂的便利函数
-func NewASRFactory(asrType string, config *configs.Config, logger *utils.Logger) ResourceFactory {
-	if asrCfg, ok := config.ASR[asrType]; ok {
-		return &ProviderFactory{
-			providerType: "asr",
-			config: &asr.Config{
-				Type: asrType,
-				Data: asrCfg,
-			},
-			logger: logger,
-			params: map[string]interface{}{
-				"type":         asrCfg["type"],
-				"delete_audio": config.DeleteAudio,
-			},
-		}
+func NewASRFactory(asrType string, configService *database.ConfigService, logger *utils.Logger, deleteAudio bool, grayscaleManager *GrayscaleManager) ResourceFactory {
+	// 从灰度管理器获取ASR配置
+	var providerConfig *database.ProviderConfig
+	var err error
+	
+	if grayscaleManager != nil {
+		providerConfig, err = grayscaleManager.GetProviderConfig("ASR", asrType)
+	} else {
+		providerConfig, err = configService.GetProviderConfig("ASR", asrType)
 	}
-	return nil
+	
+	if err != nil {
+		logger.Error("获取ASR配置失败: %v", err)
+		return nil
+	}
+	
+	return &ProviderFactory{
+		providerType: "asr",
+		config: &asr.Config{
+			Type: providerConfig.Type,
+			Data: map[string]interface{}{
+				"type":         providerConfig.Type,
+				"appid":        providerConfig.AppID,
+				"access_token": providerConfig.Token,
+				"output_dir":   providerConfig.OutputDir,
+				"addr":         providerConfig.Cluster,
+			},
+		},
+		logger: logger,
+		params: map[string]interface{}{
+			"type":         providerConfig.Type,
+			"delete_audio": deleteAudio,
+		},
+		configService: configService,
+		grayscaleManager: grayscaleManager,
+	}
 }
 
-func NewLLMFactory(llmType string, config *configs.Config, logger *utils.Logger) ResourceFactory {
-	if llmCfg, ok := config.LLM[llmType]; ok {
-		return &ProviderFactory{
-			providerType: "llm",
-			config: &llm.Config{
-				Type:        llmCfg.Type,
-				ModelName:   llmCfg.ModelName,
-				BaseURL:     llmCfg.BaseURL,
-				APIKey:      llmCfg.APIKey,
-				Temperature: llmCfg.Temperature,
-				MaxTokens:   llmCfg.MaxTokens,
-				TopP:        llmCfg.TopP,
-				Extra:       llmCfg.Extra,
-			},
-			logger: logger,
-		}
+func NewLLMFactory(llmType string, configService *database.ConfigService, logger *utils.Logger, grayscaleManager *GrayscaleManager) ResourceFactory {
+	// 从灰度管理器获取LLM配置
+	var providerConfig *database.ProviderConfig
+	var err error
+	
+	if grayscaleManager != nil {
+		providerConfig, err = grayscaleManager.GetProviderConfig("LLM", llmType)
+	} else {
+		providerConfig, err = configService.GetProviderConfig("LLM", llmType)
 	}
-	return nil
+	
+	if err != nil {
+		logger.Error("获取LLM配置失败: %v", err)
+		return nil
+	}
+	
+	return &ProviderFactory{
+		providerType: "llm",
+		config: &llm.Config{
+			Type:        providerConfig.Type,
+			ModelName:   providerConfig.ModelName,
+			BaseURL:     providerConfig.BaseURL,
+			APIKey:      providerConfig.APIKey,
+			Temperature: providerConfig.Temperature,
+			MaxTokens:   providerConfig.MaxTokens,
+			TopP:        providerConfig.TopP,
+			Extra:       providerConfig.Extra,
+		},
+		logger: logger,
+		configService: configService,
+		grayscaleManager: grayscaleManager,
+	}
 }
 
-func NewTTSFactory(ttsType string, config *configs.Config, logger *utils.Logger) ResourceFactory {
-	if ttsCfg, ok := config.TTS[ttsType]; ok {
-		return &ProviderFactory{
-			providerType: "tts",
-			config: &tts.Config{
-				Type:      ttsCfg.Type,
-				Voice:     ttsCfg.Voice,
-				Format:    ttsCfg.Format,
-				OutputDir: ttsCfg.OutputDir,
-				AppID:     ttsCfg.AppID,
-				Token:     ttsCfg.Token,
-				Cluster:   ttsCfg.Cluster,
-			},
-			logger: logger,
-			params: map[string]interface{}{
-				"type":         ttsCfg.Type,
-				"delete_audio": config.DeleteAudio,
-			},
-		}
+func NewTTSFactory(ttsType string, configService *database.ConfigService, logger *utils.Logger, deleteAudio bool, grayscaleManager *GrayscaleManager) ResourceFactory {
+	// 从灰度管理器获取TTS配置
+	var providerConfig *database.ProviderConfig
+	var err error
+	
+	if grayscaleManager != nil {
+		providerConfig, err = grayscaleManager.GetProviderConfig("TTS", ttsType)
+	} else {
+		providerConfig, err = configService.GetProviderConfig("TTS", ttsType)
 	}
-	return nil
+	
+	if err != nil {
+		logger.Error("获取TTS配置失败: %v", err)
+		return nil
+	}
+	
+	return &ProviderFactory{
+		providerType: "tts",
+		config: &tts.Config{
+			Type:      providerConfig.Type,
+			Voice:     providerConfig.Voice,
+			Format:    providerConfig.Format,
+			OutputDir: providerConfig.OutputDir,
+			AppID:     providerConfig.AppID,
+			Token:     providerConfig.Token,
+			Cluster:   providerConfig.Cluster,
+		},
+		logger: logger,
+		params: map[string]interface{}{
+			"type":         providerConfig.Type,
+			"delete_audio": deleteAudio,
+		},
+		configService: configService,
+		grayscaleManager: grayscaleManager,
+	}
 }
 
-func NewVLLLMFactory(vlllmType string, config *configs.Config, logger *utils.Logger) ResourceFactory {
-	if vlllmCfg, ok := config.VLLLM[vlllmType]; ok {
-		return &ProviderFactory{
-			providerType: "vlllm",
-			config:       &vlllmCfg,
-			logger:       logger,
-		}
+func NewVLLLMFactory(vlllmType string, configService *database.ConfigService, logger *utils.Logger, grayscaleManager *GrayscaleManager) ResourceFactory {
+	// 从灰度管理器获取VLLLM配置
+	var providerConfig *database.ProviderConfig
+	var err error
+	
+	if grayscaleManager != nil {
+		providerConfig, err = grayscaleManager.GetProviderConfig("VLLLM", vlllmType)
+	} else {
+		providerConfig, err = configService.GetProviderConfig("VLLLM", vlllmType)
 	}
-	return nil
+	
+	if err != nil {
+		logger.Error("获取VLLLM配置失败: %v", err)
+		return nil
+	}
+	
+	// 转换Security配置
+	var security vlllm.SecurityConfig
+	if providerConfig.Security != nil {
+		securityBytes, _ := json.Marshal(providerConfig.Security)
+		_ = json.Unmarshal(securityBytes, &security)
+	}
+	return &ProviderFactory{
+		providerType: "vlllm",
+		config: &vlllm.VLLLMConfig{
+			Type:        providerConfig.Type,
+			ModelName:   providerConfig.ModelName,
+			BaseURL:     providerConfig.BaseURL,
+			APIKey:      providerConfig.APIKey,
+			Temperature: providerConfig.Temperature,
+			MaxTokens:   providerConfig.MaxTokens,
+			TopP:        providerConfig.TopP,
+			Security:    security,
+			Extra:       providerConfig.Extra,
+		},
+		logger: logger,
+		configService: configService,
+		grayscaleManager: grayscaleManager,
+	}
 }
 
 func NewMCPFactory(config *configs.Config, logger *utils.Logger) ResourceFactory {

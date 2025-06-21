@@ -139,6 +139,21 @@ type GlobalConfig struct {
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
 
+// SystemConfig 系统配置模型
+type SystemConfig struct {
+	ID             int64     `json:"id" db:"id"`
+	ConfigCategory string    `json:"config_category" db:"config_category"`
+	ConfigKey      string    `json:"config_key" db:"config_key"`
+	ConfigValue    string    `json:"config_value" db:"config_value"`
+	ConfigType     string    `json:"config_type" db:"config_type"`
+	Description    string    `json:"description" db:"description"`
+	IsDefault      bool      `json:"is_default" db:"is_default"`
+	CreatedBy      *int64    `json:"created_by" db:"created_by"`
+	UpdatedBy      *int64    `json:"updated_by" db:"updated_by"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
+}
+
 // Session 会话模型
 type Session struct {
 	ID           int64      `json:"id" db:"id"`
@@ -232,20 +247,17 @@ type UserDeviceRequest struct {
 	Permissions map[string]interface{} `json:"permissions"`
 }
 
-// UserCapabilityRequest 用户AI能力配置请求
+// DefaultAICapabilityRequest 默认AI能力请求
+type DefaultAICapabilityRequest struct {
+	CapabilityName string `json:"capability_name" binding:"required"`
+	CapabilityType string `json:"capability_type" binding:"required"`
+}
+
+// UserCapabilityRequest 用户AI能力请求
 type UserCapabilityRequest struct {
 	CapabilityName string                 `json:"capability_name" binding:"required"`
 	CapabilityType string                 `json:"capability_type" binding:"required"`
 	Config         map[string]interface{} `json:"config"`
-}
-
-// DeviceCapabilityRequest 设备AI能力配置请求
-type DeviceCapabilityRequest struct {
-	CapabilityName string                 `json:"capability_name" binding:"required"`
-	CapabilityType string                 `json:"capability_type" binding:"required"`
-	Priority       int                    `json:"priority"`
-	Config         map[string]interface{} `json:"config"`
-	IsEnabled      bool                   `json:"is_enabled"`
 }
 
 // CreateDeviceRequest 创建设备请求
@@ -269,15 +281,66 @@ type UpdateDeviceRequest struct {
 	Status          string `json:"status"`
 }
 
-// AICapabilityRequest AI能力请求
-type AICapabilityRequest struct {
-	Name   string                 `json:"name" binding:"required"`
-	Type   string                 `json:"type" binding:"required"`
-	Config map[string]interface{} `json:"config"`
+// DeviceCapabilityRequest 设备AI能力请求
+type DeviceCapabilityRequest struct {
+	CapabilityName string                 `json:"capability_name" binding:"required"`
+	CapabilityType string                 `json:"capability_type" binding:"required"`
+	Priority       int                    `json:"priority"`
+	Config         map[string]interface{} `json:"config"`
+	IsEnabled      bool                   `json:"is_enabled"`
 }
 
-// DefaultAICapabilityRequest 默认AI能力请求
-type DefaultAICapabilityRequest struct {
-	CapabilityName string `json:"capability_name" binding:"required"`
-	CapabilityType string `json:"capability_type" binding:"required"`
+// AICapabilityRequest AI能力请求
+type AICapabilityRequest struct {
+	Name        string                 `json:"name" binding:"required"`
+	Type        string                 `json:"type" binding:"required"`
+	DisplayName string                 `json:"display_name" binding:"required"`
+	Description string                 `json:"description"`
+	Config      map[string]interface{} `json:"config"`
+	IsGlobal    bool                   `json:"is_global"`
+}
+
+// ProviderConfig AI Provider通用配置结构体
+// 用于TTS、LLM、VLLLM等
+// config_value字段存储为JSON
+
+type ProviderConfig struct {
+	ID          int64                  `json:"id" db:"id"`             // 主键ID
+	Category    string                 `json:"category" db:"category"` // 类别（ASR/TTS/LLM/VLLLM）
+	Name        string                 `json:"name"`                   // provider名称（如 EdgeTTS、OllamaLLM）
+	Type        string                 `json:"type"`                   // provider类型（如 edge、ollama、openai等）
+	Version     string                 `json:"version"`                // 版本号（如 v1、v2）
+	Weight      int                    `json:"weight"`                 // 流量权重（0-100）
+	IsActive    bool                   `json:"is_active"`              // 是否启用
+	IsDefault   bool                   `json:"is_default"`             // 是否为默认版本
+	ModelName   string                 `json:"model_name"`             // 模型名称
+	BaseURL     string                 `json:"url"`                    // API地址
+	APIKey      string                 `json:"api_key"`                // API密钥
+	Voice       string                 `json:"voice"`                  // 语音（TTS专用）
+	Format      string                 `json:"format"`                 // 音频格式（TTS专用）
+	OutputDir   string                 `json:"output_dir"`             // 输出目录（TTS专用）
+	AppID       string                 `json:"appid"`                  // 应用ID（TTS专用）
+	Token       string                 `json:"token"`                  // Token（TTS专用）
+	Cluster     string                 `json:"cluster"`                // 集群（TTS专用）
+	Temperature float64                `json:"temperature"`            // LLM/VLLLM参数
+	MaxTokens   int                    `json:"max_tokens"`             // LLM/VLLLM参数
+	TopP        float64                `json:"top_p"`                  // LLM/VLLLM参数
+	Security    map[string]interface{} `json:"security"`               // VLLLM图片安全参数
+	Extra       map[string]interface{} `json:"extra"`                  // 其他扩展参数
+	HealthScore float64                `json:"health_score"`           // 健康评分（0-100）
+	CreatedAt   time.Time              `json:"created_at"`             // 创建时间
+	UpdatedAt   time.Time              `json:"updated_at"`             // 更新时间
+}
+
+// ProviderVersion 灰度发布版本信息
+type ProviderVersion struct {
+	Category    string    `json:"category"`     // 类别（ASR/TTS/LLM/VLLLM）
+	Name        string    `json:"name"`         // provider名称
+	Version     string    `json:"version"`      // 版本号
+	Weight      int       `json:"weight"`       // 流量权重
+	IsActive    bool      `json:"is_active"`    // 是否启用
+	IsDefault   bool      `json:"is_default"`   // 是否为默认版本
+	HealthScore float64   `json:"health_score"` // 健康评分（0-100）
+	CreatedAt   time.Time `json:"created_at"`   // 创建时间
+	UpdatedAt   time.Time `json:"updated_at"`   // 更新时间
 }

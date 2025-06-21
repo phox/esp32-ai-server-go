@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"ai-server-go/src/core/auth"
+	"ai-server-go/src/core/pool"
 	"ai-server-go/src/core/utils"
 	"ai-server-go/src/database"
 
@@ -20,6 +21,7 @@ type UserAPI struct {
 	configService  *database.ConfigService
 	authMiddleware *auth.AuthMiddleware
 	logger         *utils.Logger
+	poolManager    *pool.PoolManager
 }
 
 // NewUserAPI 创建用户管理API
@@ -29,6 +31,7 @@ func NewUserAPI(
 	configService *database.ConfigService,
 	authMiddleware *auth.AuthMiddleware,
 	logger *utils.Logger,
+	poolManager *pool.PoolManager,
 ) *UserAPI {
 	return &UserAPI{
 		userService:    userService,
@@ -36,6 +39,7 @@ func NewUserAPI(
 		configService:  configService,
 		authMiddleware: authMiddleware,
 		logger:         logger,
+		poolManager:    poolManager,
 	}
 }
 
@@ -106,6 +110,39 @@ func (userApi *UserAPI) RegisterRoutes(r *gin.Engine) {
 		capabilities.GET("/defaults", userApi.GetDefaultCapabilities)
 		capabilities.POST("/defaults", userApi.authMiddleware.AdminRequired(), userApi.SetDefaultCapability)
 		capabilities.DELETE("/defaults/:capabilityName", userApi.authMiddleware.AdminRequired(), userApi.RemoveDefaultCapability)
+	}
+
+	// 系统配置管理路由（仅管理员）
+	systemConfigs := r.Group("/api/system-configs")
+	systemConfigs.Use(userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.AdminRequired())
+	{
+		systemConfigs.GET("", userApi.GetSystemConfigs)
+		systemConfigs.GET("/:category/:key", userApi.GetSystemConfig)
+		systemConfigs.POST("", userApi.SetSystemConfig)
+		systemConfigs.DELETE("/:category/:key", userApi.DeleteSystemConfig)
+		systemConfigs.GET("/:category", userApi.GetSystemConfigCategory)
+		systemConfigs.POST("/initialize", userApi.InitializeSystemConfigs)
+
+		// Provider配置管理API
+		systemConfigs.GET("/provider", userApi.ListProviderConfigs)
+		systemConfigs.GET("/provider/:category/:name", userApi.GetProviderConfig)
+		systemConfigs.POST("/provider", userApi.CreateProviderConfig)
+		systemConfigs.PUT("/provider/:category/:name", userApi.UpdateProviderConfig)
+		systemConfigs.DELETE("/provider/:category/:name", userApi.DeleteProviderConfig)
+
+		// 灰度发布管理API
+		systemConfigs.GET("/provider/:category/:name/versions", userApi.ListProviderVersions)
+		systemConfigs.GET("/provider/:category/:name/grayscale", userApi.GetGrayscaleStatus)
+		systemConfigs.PUT("/provider/:category/:name/weight", userApi.UpdateProviderWeight)
+		systemConfigs.PUT("/provider/:category/:name/default", userApi.SetDefaultProviderVersion)
+		systemConfigs.POST("/provider/:category/:name/refresh", userApi.RefreshGrayscaleConfig)
+	}
+
+	// 用户统计路由
+	stats := r.Group("/api/stats")
+	stats.Use(userApi.authMiddleware.AuthRequired())
+	{
+		stats.GET("/user", userApi.GetUserStats)
 	}
 }
 
@@ -1233,5 +1270,530 @@ func (userApi *UserAPI) RemoveDefaultCapability(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "默认AI能力移除成功",
+	})
+}
+
+// GetUserStats 获取用户统计信息
+func (api *UserAPI) GetUserStats(c *gin.Context) {
+	userID := api.getUserIDFromContext(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
+		return
+	}
+
+	stats, err := api.userService.GetUserStats(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取用户统计失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    stats,
+	})
+}
+
+// ==================== 系统配置管理API ====================
+
+// GetSystemConfigs 获取系统配置列表
+func (api *UserAPI) GetSystemConfigs(c *gin.Context) {
+	// 检查管理员权限
+	if !api.isAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+		return
+	}
+
+	category := c.Query("category")
+	isDefaultStr := c.Query("is_default")
+
+	var isDefault *bool
+	if isDefaultStr != "" {
+		if val, err := strconv.ParseBool(isDefaultStr); err == nil {
+			isDefault = &val
+		}
+	}
+
+	configs, err := api.configService.ListSystemConfigs(category, isDefault)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取系统配置失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    configs,
+	})
+}
+
+// GetSystemConfig 获取单个系统配置
+func (api *UserAPI) GetSystemConfig(c *gin.Context) {
+	// 检查管理员权限
+	if !api.isAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+		return
+	}
+
+	category := c.Param("category")
+	key := c.Param("key")
+
+	config, err := api.configService.GetSystemConfig(category, key)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取系统配置失败: %v", err)})
+		return
+	}
+
+	if config == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "系统配置不存在"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    config,
+	})
+}
+
+// SetSystemConfig 设置系统配置
+func (api *UserAPI) SetSystemConfig(c *gin.Context) {
+	// 检查管理员权限
+	if !api.isAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+		return
+	}
+
+	var req struct {
+		Category    string `json:"category" binding:"required"`
+		Key         string `json:"key" binding:"required"`
+		Value       string `json:"value" binding:"required"`
+		ConfigType  string `json:"config_type" binding:"required"`
+		Description string `json:"description"`
+		IsDefault   bool   `json:"is_default"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("请求参数错误: %v", err)})
+		return
+	}
+
+	userID := api.getUserIDFromContext(c)
+	err := api.configService.SetSystemConfig(req.Category, req.Key, req.Value, req.ConfigType, req.Description, req.IsDefault, &userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("设置系统配置失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "系统配置设置成功",
+	})
+}
+
+// DeleteSystemConfig 删除系统配置
+func (api *UserAPI) DeleteSystemConfig(c *gin.Context) {
+	// 检查管理员权限
+	if !api.isAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+		return
+	}
+
+	category := c.Param("category")
+	key := c.Param("key")
+
+	err := api.configService.DeleteSystemConfig(category, key)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("删除系统配置失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "系统配置删除成功",
+	})
+}
+
+// GetSystemConfigCategory 获取指定分类的所有系统配置
+func (api *UserAPI) GetSystemConfigCategory(c *gin.Context) {
+	// 检查管理员权限
+	if !api.isAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+		return
+	}
+
+	category := c.Param("category")
+
+	configs, err := api.configService.GetSystemConfigCategory(category)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取系统配置分类失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    configs,
+	})
+}
+
+// InitializeSystemConfigs 初始化默认系统配置
+func (api *UserAPI) InitializeSystemConfigs(c *gin.Context) {
+	// 检查管理员权限
+	if !api.isAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "需要管理员权限"})
+		return
+	}
+
+	err := api.configService.InitializeDefaultSystemConfigs()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("初始化系统配置失败: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "默认系统配置初始化成功",
+	})
+}
+
+// getUserIDFromContext 从上下文获取用户ID
+func (api *UserAPI) getUserIDFromContext(c *gin.Context) int64 {
+	if userID, exists := c.Get("user_id"); exists {
+		if id, ok := userID.(int64); ok {
+			return id
+		}
+	}
+	return 0
+}
+
+// isAdmin 检查当前用户是否为管理员
+func (api *UserAPI) isAdmin(c *gin.Context) bool {
+	if role, exists := c.Get("user_role"); exists {
+		if userRole, ok := role.(string); ok {
+			return userRole == "admin"
+		}
+	}
+	return false
+}
+
+// ListProviderConfigs 获取提供者配置列表
+func (userApi *UserAPI) ListProviderConfigs(c *gin.Context) {
+	category := c.Query("category")
+
+	var configs []database.ProviderConfig
+	var err error
+
+	if category != "" {
+		configs, err = userApi.configService.ListProviderConfigs(category)
+	} else {
+		// 获取所有类别的配置
+		allConfigs := make([]database.ProviderConfig, 0)
+		categories := []string{"ASR", "TTS", "LLM", "VLLLM"}
+		for _, cat := range categories {
+			catConfigs, _ := userApi.configService.ListProviderConfigs(cat)
+			allConfigs = append(allConfigs, catConfigs...)
+		}
+		configs = allConfigs
+	}
+
+	if err != nil {
+		userApi.logger.Error("获取提供者配置列表失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取提供者配置列表失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":  configs,
+		"total": len(configs),
+	})
+}
+
+// GetProviderConfig 获取单个提供者配置
+func (userApi *UserAPI) GetProviderConfig(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+
+	config, err := userApi.configService.GetProviderConfig(category, name)
+	if err != nil {
+		userApi.logger.Error("获取提供者配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取提供者配置失败",
+		})
+		return
+	}
+
+	if config == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "提供者配置不存在",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": config,
+	})
+}
+
+// CreateProviderConfig 创建提供者配置
+func (userApi *UserAPI) CreateProviderConfig(c *gin.Context) {
+	var config database.ProviderConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误: " + err.Error(),
+		})
+		return
+	}
+	category := c.Query("category")
+	if category == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "类别参数为必需"})
+		return
+	}
+	if config.Name == "" || config.Type == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "名称和类型为必需字段"})
+		return
+	}
+	existing, _ := userApi.configService.GetProviderConfig(category, config.Name)
+	if existing != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "提供者配置已存在"})
+		return
+	}
+	err := userApi.configService.SetProviderConfig(category, config.Name, &config)
+	if err != nil {
+		userApi.logger.Error("创建提供者配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建提供者配置失败"})
+		return
+	}
+	if userApi.poolManager != nil {
+		_ = userApi.poolManager.ReloadProviderConfig(category, config.Name)
+	}
+	c.JSON(http.StatusCreated, gin.H{"message": "提供者配置创建成功", "data": config})
+}
+
+// UpdateProviderConfig 更新提供者配置
+func (userApi *UserAPI) UpdateProviderConfig(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+	var config database.ProviderConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+	existing, err := userApi.configService.GetProviderConfig(category, name)
+	if err != nil {
+		userApi.logger.Error("检查提供者配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "检查提供者配置失败"})
+		return
+	}
+	if existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "提供者配置不存在"})
+		return
+	}
+	config.Name = name
+	err = userApi.configService.SetProviderConfig(category, name, &config)
+	if err != nil {
+		userApi.logger.Error("更新提供者配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新提供者配置失败"})
+		return
+	}
+	if userApi.poolManager != nil {
+		_ = userApi.poolManager.ReloadProviderConfig(category, name)
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "提供者配置更新成功", "data": config})
+}
+
+// DeleteProviderConfig 删除提供者配置
+func (userApi *UserAPI) DeleteProviderConfig(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+	existing, err := userApi.configService.GetProviderConfig(category, name)
+	if err != nil {
+		userApi.logger.Error("检查提供者配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "检查提供者配置失败"})
+		return
+	}
+	if existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "提供者配置不存在"})
+		return
+	}
+	err = userApi.configService.DeleteProviderConfig(category, name)
+	if err != nil {
+		userApi.logger.Error("删除提供者配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除提供者配置失败"})
+		return
+	}
+	if userApi.poolManager != nil {
+		_ = userApi.poolManager.ReloadProviderConfig(category, name)
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "提供者配置删除成功"})
+}
+
+// ListProviderVersions 获取provider的所有版本
+func (userApi *UserAPI) ListProviderVersions(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+
+	versions, err := userApi.configService.ListProviderVersions(category, name)
+	if err != nil {
+		userApi.logger.Error("获取provider版本列表失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取provider版本列表失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":  versions,
+		"total": len(versions),
+	})
+}
+
+// GetGrayscaleStatus 获取灰度发布状态
+func (userApi *UserAPI) GetGrayscaleStatus(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+
+	if userApi.poolManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "灰度发布管理器未初始化",
+		})
+		return
+	}
+
+	grayscaleManager := userApi.poolManager.GetGrayscaleManager()
+	if grayscaleManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "灰度发布管理器未初始化",
+		})
+		return
+	}
+
+	status, err := grayscaleManager.GetGrayscaleStatus(category, name)
+	if err != nil {
+		userApi.logger.Error("获取灰度发布状态失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取灰度发布状态失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": status,
+	})
+}
+
+// UpdateProviderWeight 更新provider版本权重
+func (userApi *UserAPI) UpdateProviderWeight(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+
+	var req struct {
+		Version string `json:"version" binding:"required"`
+		Weight  int    `json:"weight" binding:"required,min=0,max=100"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误: " + err.Error(),
+		})
+		return
+	}
+
+	if userApi.poolManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "灰度发布管理器未初始化",
+		})
+		return
+	}
+
+	grayscaleManager := userApi.poolManager.GetGrayscaleManager()
+	if grayscaleManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "灰度发布管理器未初始化",
+		})
+		return
+	}
+
+	err := grayscaleManager.UpdateWeight(category, name, req.Version, req.Weight)
+	if err != nil {
+		userApi.logger.Error("更新provider权重失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "更新provider权重失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "provider权重更新成功",
+	})
+}
+
+// SetDefaultProviderVersion 设置默认provider版本
+func (userApi *UserAPI) SetDefaultProviderVersion(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+
+	var req struct {
+		Version string `json:"version" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误: " + err.Error(),
+		})
+		return
+	}
+
+	err := userApi.configService.SetDefaultProviderVersion(category, name, req.Version)
+	if err != nil {
+		userApi.logger.Error("设置默认provider版本失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "设置默认provider版本失败",
+		})
+		return
+	}
+
+	// 刷新灰度配置缓存
+	if userApi.poolManager != nil {
+		grayscaleManager := userApi.poolManager.GetGrayscaleManager()
+		if grayscaleManager != nil {
+			_ = grayscaleManager.RefreshConfig(category, name)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "默认provider版本设置成功",
+	})
+}
+
+// RefreshGrayscaleConfig 刷新灰度配置缓存
+func (userApi *UserAPI) RefreshGrayscaleConfig(c *gin.Context) {
+	category := c.Param("category")
+	name := c.Param("name")
+
+	if userApi.poolManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "灰度发布管理器未初始化",
+		})
+		return
+	}
+
+	grayscaleManager := userApi.poolManager.GetGrayscaleManager()
+	if grayscaleManager == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "灰度发布管理器未初始化",
+		})
+		return
+	}
+
+	err := grayscaleManager.RefreshConfig(category, name)
+	if err != nil {
+		userApi.logger.Error("刷新灰度配置失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "刷新灰度配置失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "灰度配置刷新成功",
 	})
 }

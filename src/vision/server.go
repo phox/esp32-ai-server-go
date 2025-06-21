@@ -3,6 +3,7 @@ package vision
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,35 +17,41 @@ import (
 	"ai-server-go/src/core/providers"
 	"ai-server-go/src/core/providers/vlllm"
 	"ai-server-go/src/core/utils"
+	"ai-server-go/src/database"
 
 	"github.com/gin-gonic/gin"
 )
 
 const (
-	// 最大文件大小为5MB
-	MAX_FILE_SIZE = 5 * 1024 * 1024
+	MAX_FILE_SIZE = 10 << 20 // 10MB
+	IMAGE_DIR     = "tmp/vision"
 )
 
+// DefaultVisionService 默认Vision服务实现
 type DefaultVisionService struct {
-	logger    *utils.Logger
-	config    *configs.Config
-	vlllmMap  map[string]*vlllm.Provider // 支持多个VLLLM provider
-	authToken *auth.AuthToken            // 认证工具
+	logger        *utils.Logger
+	config        *configs.Config
+	configService *database.ConfigService
+	vlllmMap      map[string]*vlllm.Provider // 支持多个VLLLM provider
+	authToken     *auth.AuthToken            // 认证工具
 }
 
-// NewDefaultVisionService 构造函数
-func NewDefaultVisionService(config *configs.Config, logger *utils.Logger) (*DefaultVisionService, error) {
-	service := &DefaultVisionService{
-		logger:   logger,
-		config:   config,
-		vlllmMap: make(map[string]*vlllm.Provider),
-	}
+// NewDefaultVisionService 创建默认Vision服务
+func NewDefaultVisionService(config *configs.Config, logger *utils.Logger, configService *database.ConfigService) (*DefaultVisionService, error) {
+	// 创建认证工具
+	authToken := auth.NewAuthToken(config.Server.Token)
 
-	service.authToken = auth.NewAuthToken(config.Server.Token)
+	service := &DefaultVisionService{
+		logger:        logger,
+		config:        config,
+		configService: configService,
+		vlllmMap:      make(map[string]*vlllm.Provider),
+		authToken:     authToken,
+	}
 
 	// 初始化VLLLM providers
 	if err := service.initVLLMProviders(); err != nil {
-		return nil, fmt.Errorf("初始化VLLLM providers失败: %v", err)
+		return nil, err
 	}
 
 	return service, nil
@@ -52,42 +59,57 @@ func NewDefaultVisionService(config *configs.Config, logger *utils.Logger) (*Def
 
 // initVLLMProviders 初始化VLLLM providers
 func (s *DefaultVisionService) initVLLMProviders() error {
-	// 先看配置中的VLLLM provider
-	selected_vlllm := s.config.SelectedModule["VLLLM"]
-	if selected_vlllm == "" {
-		s.logger.Warn("请设置好VLLLM provider配置")
-		return fmt.Errorf("请设置好VLLLM provider配置")
-	}
-
-	vlllmConfig := s.config.VLLLM[selected_vlllm]
-
-	// 创建VLLLM provider配置
-	providerConfig := &vlllm.Config{
-		Type:        vlllmConfig.Type,
-		ModelName:   vlllmConfig.ModelName,
-		BaseURL:     vlllmConfig.BaseURL,
-		APIKey:      vlllmConfig.APIKey,
-		Temperature: vlllmConfig.Temperature,
-		MaxTokens:   vlllmConfig.MaxTokens,
-		TopP:        vlllmConfig.TopP,
-		Security:    vlllmConfig.Security,
-	}
-
-	// 创建provider实例
-	provider, err := vlllm.NewProvider(providerConfig, s.logger)
+	// 从数据库获取所有活跃的VLLLM配置
+	vlllmConfigs, err := s.configService.ListProviderConfigs("VLLLM")
 	if err != nil {
-		s.logger.Warn(fmt.Sprintf("创建VLLLM provider 失败: %v", err))
-
+		s.logger.Error("获取VLLLM配置失败: %v", err)
+		return err
 	}
 
-	// 初始化provider
-	if err := provider.Initialize(); err != nil {
-		s.logger.Warn(fmt.Sprintf("初始化VLLLM provider失败: %v", err))
-
+	if len(vlllmConfigs) == 0 {
+		s.logger.Warn("数据库中没有VLLLM配置")
+		return fmt.Errorf("数据库中没有VLLLM配置")
 	}
 
-	s.vlllmMap[selected_vlllm] = provider
-	s.logger.Info(fmt.Sprintf("VLLLM provider %s 初始化成功", selected_vlllm))
+	// 初始化每个VLLLM provider
+	for _, vlllmConfig := range vlllmConfigs {
+		if !vlllmConfig.IsActive {
+			continue
+		}
+
+		// 创建VLLLM provider配置
+		var security vlllm.SecurityConfig
+		if vlllmConfig.Security != nil {
+			securityBytes, _ := json.Marshal(vlllmConfig.Security)
+			_ = json.Unmarshal(securityBytes, &security)
+		}
+		providerConfig := &vlllm.Config{
+			Type:        vlllmConfig.Type,
+			ModelName:   vlllmConfig.ModelName,
+			BaseURL:     vlllmConfig.BaseURL,
+			APIKey:      vlllmConfig.APIKey,
+			Temperature: vlllmConfig.Temperature,
+			MaxTokens:   vlllmConfig.MaxTokens,
+			TopP:        vlllmConfig.TopP,
+			Security:    security,
+		}
+
+		// 创建provider实例
+		provider, err := vlllm.NewProvider(providerConfig, s.logger)
+		if err != nil {
+			s.logger.Warn(fmt.Sprintf("创建VLLLM provider %s 失败: %v", vlllmConfig.Name, err))
+			continue
+		}
+
+		// 初始化provider
+		if err := provider.Initialize(); err != nil {
+			s.logger.Warn(fmt.Sprintf("初始化VLLLM provider %s 失败: %v", vlllmConfig.Name, err))
+			continue
+		}
+
+		s.vlllmMap[vlllmConfig.Name] = provider
+		s.logger.Info(fmt.Sprintf("VLLLM provider %s 初始化成功", vlllmConfig.Name))
+	}
 
 	if len(s.vlllmMap) == 0 {
 		s.logger.Error("没有可用的VLLLM provider，请检查配置")

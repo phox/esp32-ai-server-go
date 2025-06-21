@@ -171,7 +171,28 @@ CREATE TABLE global_configs (
     INDEX idx_is_system (is_system)
 ) COMMENT '全局配置表';
 
--- 10. 会话记录表 (sessions)
+-- 10. 系统配置表 (system_configs)
+CREATE TABLE system_configs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '配置ID',
+    config_category VARCHAR(32) NOT NULL COMMENT '配置分类(prompt/audio/ai_providers/connectivity)',
+    config_key VARCHAR(128) NOT NULL COMMENT '配置键',
+    config_value TEXT COMMENT '配置值',
+    config_type ENUM('string', 'int', 'float', 'bool', 'json', 'array') NOT NULL DEFAULT 'string' COMMENT '配置类型',
+    description TEXT COMMENT '配置描述',
+    is_default BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否为默认配置',
+    created_by BIGINT NULL COMMENT '创建者用户ID',
+    updated_by BIGINT NULL COMMENT '更新者用户ID',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE KEY uk_category_key (config_category, config_key),
+    INDEX idx_config_category (config_category),
+    INDEX idx_config_key (config_key),
+    INDEX idx_is_default (is_default)
+) COMMENT '系统配置表';
+
+-- 11. 会话记录表 (sessions)
 CREATE TABLE sessions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '会话ID',
     user_id BIGINT NULL COMMENT '用户ID(可为空，支持匿名会话)',
@@ -193,7 +214,7 @@ CREATE TABLE sessions (
     INDEX idx_start_time (start_time)
 ) COMMENT '会话记录表';
 
--- 11. 使用统计表 (usage_stats)
+-- 12. 使用统计表 (usage_stats)
 CREATE TABLE usage_stats (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '统计ID',
     user_id BIGINT NULL COMMENT '用户ID(可为空，支持匿名统计)',
@@ -251,4 +272,37 @@ INSERT INTO global_configs (config_key, config_value, config_type, description, 
 
 -- 插入默认管理员用户 (密码: admin123)
 INSERT INTO users (username, email, password_hash, salt, nickname, role) VALUES
-('admin', 'admin@example.com', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'admin_salt', '系统管理员', 'admin'); 
+('admin', 'admin@example.com', '8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918', 'admin_salt', '系统管理员', 'admin');
+
+-- Provider配置表（支持灰度发布）
+CREATE TABLE IF NOT EXISTS provider_configs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    category VARCHAR(20) NOT NULL COMMENT '类别：ASR/TTS/LLM/VLLLM',
+    name VARCHAR(100) NOT NULL COMMENT 'provider名称',
+    version VARCHAR(20) DEFAULT 'v1' COMMENT '版本号',
+    weight INT DEFAULT 100 COMMENT '流量权重（0-100）',
+    is_active BOOLEAN DEFAULT TRUE COMMENT '是否启用',
+    is_default BOOLEAN DEFAULT FALSE COMMENT '是否为默认版本',
+    type VARCHAR(50) NOT NULL COMMENT 'provider类型',
+    model_name VARCHAR(100) COMMENT '模型名称',
+    url VARCHAR(500) COMMENT 'API地址',
+    api_key VARCHAR(500) COMMENT 'API密钥',
+    voice VARCHAR(100) COMMENT '语音（TTS专用）',
+    format VARCHAR(20) COMMENT '音频格式（TTS专用）',
+    output_dir VARCHAR(500) COMMENT '输出目录（TTS专用）',
+    appid VARCHAR(100) COMMENT '应用ID（TTS专用）',
+    token VARCHAR(500) COMMENT 'Token（TTS专用）',
+    cluster VARCHAR(500) COMMENT '集群（TTS专用）',
+    temperature DECIMAL(3,2) DEFAULT 0.7 COMMENT '温度参数',
+    max_tokens INT DEFAULT 2048 COMMENT '最大令牌数',
+    top_p DECIMAL(3,2) DEFAULT 0.9 COMMENT 'TopP参数',
+    security JSON COMMENT '安全配置（VLLLM专用）',
+    extra JSON COMMENT '其他扩展参数',
+    health_score DECIMAL(5,2) DEFAULT 100.00 COMMENT '健康评分（0-100）',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_category_name_version (category, name, version),
+    INDEX idx_category_name (category, name),
+    INDEX idx_is_active (is_active),
+    INDEX idx_is_default (is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI Provider配置表（支持灰度发布）'; 

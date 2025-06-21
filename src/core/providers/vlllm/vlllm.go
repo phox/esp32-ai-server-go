@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"ai-server-go/src/configs"
 	"ai-server-go/src/core/image"
 	"ai-server-go/src/core/providers"
 	"ai-server-go/src/core/utils"
@@ -18,7 +17,31 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-// Config VLLLM配置结构
+// SecurityConfig 图片安全配置结构（本地定义）
+type SecurityConfig struct {
+	MaxFileSize       int64    `json:"max_file_size"`
+	MaxPixels         int64    `json:"max_pixels"`
+	MaxWidth          int      `json:"max_width"`
+	MaxHeight         int      `json:"max_height"`
+	AllowedFormats    []string `json:"allowed_formats"`
+	EnableDeepScan    bool     `json:"enable_deep_scan"`
+	ValidationTimeout string   `json:"validation_timeout"`
+}
+
+// VLLLMConfig VLLLM配置结构（本地定义）
+type VLLLMConfig struct {
+	Type        string                 `json:"type"`
+	ModelName   string                 `json:"model_name"`
+	BaseURL     string                 `json:"url"`
+	APIKey      string                 `json:"api_key"`
+	Temperature float64                `json:"temperature"`
+	MaxTokens   int                    `json:"max_tokens"`
+	TopP        float64                `json:"top_p"`
+	Security    SecurityConfig         `json:"security"`
+	Extra       map[string]interface{} `json:"extra"`
+}
+
+// Config VLLLM配置
 type Config struct {
 	Type        string
 	ModelName   string
@@ -27,7 +50,7 @@ type Config struct {
 	Temperature float64
 	MaxTokens   int
 	TopP        float64
-	Security    configs.SecurityConfig
+	Security    SecurityConfig
 	Data        map[string]interface{}
 }
 
@@ -71,7 +94,7 @@ type OllamaResponse struct {
 // NewProvider 创建新的VLLLM提供者
 func NewProvider(config *Config, logger *utils.Logger) (*Provider, error) {
 	// 构建VLLLM配置
-	vlllmConfig := &configs.VLLMConfig{
+	vlllmConfig := &image.VLLLMConfig{
 		Type:        config.Type,
 		ModelName:   config.ModelName,
 		BaseURL:     config.BaseURL,
@@ -79,7 +102,8 @@ func NewProvider(config *Config, logger *utils.Logger) (*Provider, error) {
 		Temperature: config.Temperature,
 		MaxTokens:   config.MaxTokens,
 		TopP:        config.TopP,
-		Security:    config.Security,
+		Security:    image.SecurityConfig(config.Security),
+		Extra:       config.Data,
 	}
 
 	// 创建图片处理器

@@ -598,4 +598,304 @@ curl -X POST http://localhost:8080/api/users/2/capabilities \
 3. **设备绑定**: 一个设备可以绑定给多个用户，但每个用户只能绑定一次
 4. **AI能力配置**: 支持用户级别和设备级别的AI能力配置，设备级别优先级更高
 5. **数据库**: 确保MySQL数据库已正确配置并运行
-6. **默认管理员**: 系统初始化时会创建默认管理员账户（用户名：admin，密码：admin123） 
+6. **默认管理员**: 系统初始化时会创建默认管理员账户（用户名：admin，密码：admin123）
+
+## 测试说明
+
+### 1. 用户管理测试
+```bash
+# 1. 创建管理员用户
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "email": "admin@example.com",
+    "password": "admin123",
+    "nickname": "管理员"
+  }'
+
+# 2. 登录获取token
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "admin",
+    "password": "admin123"
+  }'
+
+# 3. 使用token访问API
+curl -X GET http://localhost:8080/api/users \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+### 2. 设备管理测试
+```bash
+# 创建设备
+curl -X POST http://localhost:8080/api/devices \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "oui": "12345678",
+    "sn": "ESP32_001",
+    "device_name": "测试设备1",
+    "device_type": "esp32",
+    "device_model": "ESP32-WROOM-32"
+  }'
+
+# 绑定设备到用户
+curl -X POST http://localhost:8080/api/users/1/devices \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "device_uuid": "DEVICE_UUID_HERE",
+    "device_alias": "我的设备",
+    "is_owner": true
+  }'
+```
+
+### 3. AI能力配置测试
+```bash
+# 设置设备AI能力
+curl -X POST http://localhost:8080/api/devices/1/capabilities \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "capability_name": "ASR",
+    "capability_type": "DoubaoASR",
+    "priority": 1,
+    "config": {
+      "appid": "your_appid",
+      "access_token": "your_token"
+    },
+    "is_enabled": true
+  }'
+
+# 获取设备AI能力（带回退逻辑）
+curl -X GET http://localhost:8080/api/devices/1/capabilities/with-fallback \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+## 系统配置管理API
+
+### 概述
+系统配置管理API允许管理员管理全局的AI配置，包括提示词、音频处理、AI提供商默认设置等。这些配置会作为系统默认值，当设备或用户没有特定配置时使用。
+
+### 权限要求
+- 所有系统配置管理API都需要管理员权限
+- 需要在请求头中包含有效的管理员token
+
+### API端点
+
+#### 1. 获取系统配置列表
+```http
+GET /api/system-configs?category={category}&is_default={is_default}
+```
+
+**参数：**
+- `category` (可选): 配置分类 (prompt/audio/ai_providers/connectivity)
+- `is_default` (可选): 是否为默认配置 (true/false)
+
+**响应：**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "config_category": "prompt",
+      "config_key": "default_prompt",
+      "config_value": "你是小智/小志，来自中国台湾省的00后女生...",
+      "config_type": "string",
+      "description": "默认AI提示词",
+      "is_default": true,
+      "created_by": 1,
+      "updated_by": 1,
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+#### 2. 获取单个系统配置
+```http
+GET /api/system-configs/{category}/{key}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "config_category": "prompt",
+    "config_key": "default_prompt",
+    "config_value": "你是小智/小志，来自中国台湾省的00后女生...",
+    "config_type": "string",
+    "description": "默认AI提示词",
+    "is_default": true,
+    "created_by": 1,
+    "updated_by": 1,
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:00:00Z"
+  }
+}
+```
+
+#### 3. 设置系统配置
+```http
+POST /api/system-configs
+```
+
+**请求体：**
+```json
+{
+  "category": "prompt",
+  "key": "default_prompt",
+  "value": "你是小智/小志，来自中国台湾省的00后女生...",
+  "config_type": "string",
+  "description": "默认AI提示词",
+  "is_default": true
+}
+```
+
+**配置类型说明：**
+- `string`: 字符串类型
+- `int`: 整数类型
+- `float`: 浮点数类型
+- `bool`: 布尔类型
+- `json`: JSON对象类型
+- `array`: 数组类型
+
+#### 4. 删除系统配置
+```http
+DELETE /api/system-configs/{category}/{key}
+```
+
+#### 5. 获取指定分类的所有系统配置
+```http
+GET /api/system-configs/{category}
+```
+
+**响应：**
+```json
+{
+  "success": true,
+  "data": {
+    "default_prompt": "你是小智/小志，来自中国台湾省的00后女生...",
+    "delete_audio": true,
+    "quick_reply": true,
+    "quick_reply_words": ["我在", "在呢", "来了", "啥事啊"]
+  }
+}
+```
+
+#### 6. 初始化默认系统配置
+```http
+POST /api/system-configs/initialize
+```
+
+**说明：** 此API会初始化所有默认的系统配置，包括：
+- 提示词配置
+- 音频处理配置
+- AI提供商默认配置
+- 连通性检查配置
+
+### 配置分类说明
+
+#### 1. prompt (提示词配置)
+- `default_prompt`: 默认AI提示词
+
+#### 2. audio (音频处理配置)
+- `delete_audio`: 是否删除音频文件 (bool)
+- `quick_reply`: 是否启用快速回复 (bool)
+- `quick_reply_words`: 快速回复词汇 (array)
+
+#### 3. ai_providers (AI提供商默认配置)
+- `default_asr`: 默认ASR提供商 (string)
+- `default_tts`: 默认TTS提供商 (string)
+- `default_llm`: 默认LLM提供商 (string)
+- `default_vlllm`: 默认VLLLM提供商 (string)
+
+#### 4. connectivity (连通性检查配置)
+- `enabled`: 是否启用连通性检查 (bool)
+- `timeout`: 检查超时时间 (string)
+- `retry_attempts`: 重试次数 (int)
+- `retry_delay`: 重试延迟 (string)
+- `asr_test_audio`: ASR测试音频文件 (string)
+- `llm_test_prompt`: LLM测试提示词 (string)
+- `tts_test_text`: TTS测试文本 (string)
+
+### 使用示例
+
+#### 1. 修改默认AI提示词
+```bash
+curl -X POST http://localhost:8080/api/system-configs \
+  -H "Authorization: Bearer ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "category": "prompt",
+    "key": "default_prompt",
+    "value": "你是一个友好的AI助手，请用简洁的语言回答问题。",
+    "config_type": "string",
+    "description": "默认AI提示词",
+    "is_default": true
+  }'
+```
+
+#### 2. 修改音频处理配置
+```bash
+curl -X POST http://localhost:8080/api/system-configs \
+  -H "Authorization: Bearer ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "category": "audio",
+    "key": "quick_reply_words",
+    "value": "[\"好的\", \"没问题\", \"收到\"]",
+    "config_type": "array",
+    "description": "快速回复词汇",
+    "is_default": true
+  }'
+```
+
+#### 3. 修改默认AI提供商
+```bash
+curl -X POST http://localhost:8080/api/system-configs \
+  -H "Authorization: Bearer ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "category": "ai_providers",
+    "key": "default_llm",
+    "value": "OpenAILLM",
+    "config_type": "string",
+    "description": "默认LLM提供商",
+    "is_default": true
+  }'
+```
+
+### 注意事项
+
+1. **权限控制**: 只有管理员用户可以访问系统配置管理API
+2. **配置优先级**: 系统配置作为最后的默认值，优先级低于设备特定配置和用户特定配置
+3. **配置类型**: 设置配置时必须指定正确的配置类型，否则可能导致解析错误
+4. **初始化**: 系统启动时会自动初始化默认配置，也可以通过API手动初始化
+5. **配置验证**: 建议在修改配置前先获取当前配置，确保修改的正确性
+
+### 错误处理
+
+```json
+{
+  "error": "需要管理员权限"
+}
+```
+
+```json
+{
+  "error": "系统配置不存在"
+}
+```
+
+```json
+{
+  "error": "设置系统配置失败: 配置类型错误"
+}
+``` 

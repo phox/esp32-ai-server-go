@@ -695,9 +695,9 @@ func (s *UserService) GetUserWithCapabilities(userID int64) (*UserWithCapabiliti
 	}, nil
 }
 
-// GetUserAuthByKey 根据auth_key获取认证信息
+// GetUserAuthByKey 根据认证密钥获取用户认证信息
 func (s *UserService) GetUserAuthByKey(authKey string) (*UserAuth, error) {
-	query := `SELECT * FROM user_auth WHERE auth_key = ? AND is_active = true`
+	query := `SELECT * FROM user_auth WHERE auth_key = ? AND is_active = 1`
 
 	var auth UserAuth
 	err := s.db.QueryRow(query, authKey).Scan(
@@ -719,10 +719,64 @@ func (s *UserService) GetUserAuthByKey(authKey string) (*UserAuth, error) {
 		return nil, fmt.Errorf("查询用户认证失败: %v", err)
 	}
 
-	// 检查认证是否过期
-	if auth.ExpiresAt != nil && auth.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("认证已过期")
+	return &auth, nil
+}
+
+// GetUserStats 获取用户统计信息
+func (s *UserService) GetUserStats(userID int64) (map[string]interface{}, error) {
+	stats := make(map[string]interface{})
+
+	// 获取设备数量
+	var deviceCount int
+	query := `SELECT COUNT(*) FROM user_devices WHERE user_id = ? AND is_active = 1`
+	err := s.db.QueryRow(query, userID).Scan(&deviceCount)
+	if err != nil {
+		return nil, fmt.Errorf("获取设备数量失败: %v", err)
+	}
+	stats["device_count"] = deviceCount
+
+	// 获取AI能力数量
+	var capabilityCount int
+	query = `SELECT COUNT(*) FROM user_capabilities WHERE user_id = ? AND is_active = 1`
+	err = s.db.QueryRow(query, userID).Scan(&capabilityCount)
+	if err != nil {
+		return nil, fmt.Errorf("获取AI能力数量失败: %v", err)
+	}
+	stats["capability_count"] = capabilityCount
+
+	// 获取会话数量（最近30天）
+	var sessionCount int
+	query = `SELECT COUNT(*) FROM sessions WHERE user_id = ? AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+	err = s.db.QueryRow(query, userID).Scan(&sessionCount)
+	if err != nil {
+		return nil, fmt.Errorf("获取会话数量失败: %v", err)
+	}
+	stats["session_count_30d"] = sessionCount
+
+	// 获取使用统计（最近30天）
+	var totalRequests, successRequests, errorRequests int
+	query = `SELECT 
+		SUM(request_count) as total_requests,
+		SUM(success_count) as success_requests,
+		SUM(error_count) as error_requests
+		FROM usage_stats 
+		WHERE user_id = ? AND usage_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+
+	err = s.db.QueryRow(query, userID).Scan(&totalRequests, &successRequests, &errorRequests)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("获取使用统计失败: %v", err)
 	}
 
-	return &auth, nil
+	stats["total_requests_30d"] = totalRequests
+	stats["success_requests_30d"] = successRequests
+	stats["error_requests_30d"] = errorRequests
+
+	// 计算成功率
+	if totalRequests > 0 {
+		stats["success_rate_30d"] = float64(successRequests) / float64(totalRequests) * 100
+	} else {
+		stats["success_rate_30d"] = 0.0
+	}
+
+	return stats, nil
 }

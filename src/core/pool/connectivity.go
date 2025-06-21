@@ -6,6 +6,7 @@ import (
 	"ai-server-go/src/core/providers"
 	"ai-server-go/src/core/providers/vlllm"
 	"ai-server-go/src/core/utils"
+	"ai-server-go/src/database"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -51,65 +52,10 @@ type TestModes struct {
 	TTSTestText   string `yaml:"tts_test_text"`
 }
 
-// ConfigFromYAML 从YAML配置创建连通性检查配置
-func ConfigFromYAML(yamlConfig *configs.ConnectivityCheckConfig) (*ConnectivityConfig, error) {
-	if yamlConfig == nil {
-		return DefaultConnectivityConfig(), nil
-	}
-
-	// 解析超时时间
-	timeout := 30 * time.Second
-	if yamlConfig.Timeout != "" {
-		if t, err := time.ParseDuration(yamlConfig.Timeout); err == nil {
-			timeout = t
-		}
-	}
-
-	// 解析重试延迟
-	retryDelay := 5 * time.Second
-	if yamlConfig.RetryDelay != "" {
-		if t, err := time.ParseDuration(yamlConfig.RetryDelay); err == nil {
-			retryDelay = t
-		}
-	}
-
-	// 设置重试次数，默认为3
-	retryAttempts := 3
-	if yamlConfig.RetryAttempts > 0 {
-		retryAttempts = yamlConfig.RetryAttempts
-	}
-
-	return &ConnectivityConfig{
-		Enabled:       yamlConfig.Enabled,
-		Timeout:       timeout,
-		RetryAttempts: retryAttempts,
-		RetryDelay:    retryDelay,
-		TestModes: TestModes{
-			ASRTestAudio:  yamlConfig.TestModes.ASRTestAudio,
-			LLMTestPrompt: yamlConfig.TestModes.LLMTestPrompt,
-			TTSTestText:   yamlConfig.TestModes.TTSTestText,
-		},
-	}, nil
-}
-
-// DefaultConnectivityConfig 默认连通性检查配置
-func DefaultConnectivityConfig() *ConnectivityConfig {
-	return &ConnectivityConfig{
-		Enabled:       true,
-		Timeout:       30 * time.Second,
-		RetryAttempts: 3,
-		RetryDelay:    5 * time.Second,
-		TestModes: TestModes{
-			ASRTestAudio:  "",
-			LLMTestPrompt: "Hello",
-			TTSTestText:   "测试",
-		},
-	}
-}
-
 // HealthChecker 统一健康检查管理器
 type HealthChecker struct {
 	config        *configs.Config
+	configService *database.ConfigService
 	connConfig    *ConnectivityConfig
 	logger        *utils.Logger
 	testGenerator *TestDataGenerator
@@ -117,13 +63,14 @@ type HealthChecker struct {
 }
 
 // NewHealthChecker 创建健康检查器
-func NewHealthChecker(config *configs.Config, connConfig *ConnectivityConfig, logger *utils.Logger) *HealthChecker {
+func NewHealthChecker(config *configs.Config, configService *database.ConfigService, connConfig *ConnectivityConfig, logger *utils.Logger) *HealthChecker {
 	if connConfig == nil {
 		connConfig = DefaultConnectivityConfig()
 	}
 
 	return &HealthChecker{
 		config:        config,
+		configService: configService,
 		connConfig:    connConfig,
 		logger:        logger,
 		testGenerator: NewTestDataGenerator(connConfig.TestModes),
@@ -132,7 +79,7 @@ func NewHealthChecker(config *configs.Config, connConfig *ConnectivityConfig, lo
 }
 
 // CheckAllProviders 检查所有配置的提供者
-func (hc *HealthChecker) CheckAllProviders(ctx context.Context, mode CheckMode) error {
+func (hc *HealthChecker) CheckAllProviders(ctx context.Context, mode CheckMode, defaultModules map[string]string) error {
 	if !hc.connConfig.Enabled {
 		hc.logger.Info("连通性检查已禁用，跳过检查")
 		return nil
@@ -144,7 +91,7 @@ func (hc *HealthChecker) CheckAllProviders(ctx context.Context, mode CheckMode) 
 	}
 	hc.logger.Info("开始执行%s检查...", checkTypeName)
 
-	selectedModule := hc.config.SelectedModule
+	selectedModule := defaultModules
 	var allErrors []error
 
 	// 检查ASR
@@ -201,7 +148,7 @@ func (hc *HealthChecker) checkASRProvider(ctx context.Context, asrType string, m
 	}
 
 	// 创建ASR实例
-	asrFactory := NewASRFactory(asrType, hc.config, hc.logger)
+	asrFactory := NewASRFactory(asrType, hc.configService, hc.logger, true, nil)
 	if asrFactory == nil {
 		result.Success = false
 		result.Error = fmt.Errorf("创建ASR工厂失败: 找不到配置 %s", asrType)
@@ -299,7 +246,7 @@ func (hc *HealthChecker) checkLLMProvider(ctx context.Context, llmType string, m
 	}
 
 	// 创建LLM实例
-	llmFactory := NewLLMFactory(llmType, hc.config, hc.logger)
+	llmFactory := NewLLMFactory(llmType, hc.configService, hc.logger, nil)
 	if llmFactory == nil {
 		result.Success = false
 		result.Error = fmt.Errorf("创建LLM工厂失败: 找不到配置 %s", llmType)
@@ -398,7 +345,7 @@ func (hc *HealthChecker) checkTTSProvider(ctx context.Context, ttsType string, m
 	}
 
 	// 创建TTS实例
-	ttsFactory := NewTTSFactory(ttsType, hc.config, hc.logger)
+	ttsFactory := NewTTSFactory(ttsType, hc.configService, hc.logger, true, nil)
 	if ttsFactory == nil {
 		result.Success = false
 		result.Error = fmt.Errorf("创建TTS工厂失败: 找不到配置 %s", ttsType)
@@ -482,7 +429,7 @@ func (hc *HealthChecker) checkVLLLMProvider(ctx context.Context, vlllmType strin
 	}
 
 	// 创建VLLLM实例
-	vlllmFactory := NewVLLLMFactory(vlllmType, hc.config, hc.logger)
+	vlllmFactory := NewVLLLMFactory(vlllmType, hc.configService, hc.logger, nil)
 	if vlllmFactory == nil {
 		result.Success = false
 		result.Error = fmt.Errorf("创建VLLLM工厂失败: 找不到配置 %s", vlllmType)
@@ -678,4 +625,19 @@ func (hc *HealthChecker) PrintReport() {
 	}
 
 	hc.logger.Info("=== 检查报告结束 ===")
+}
+
+// DefaultConnectivityConfig 默认连通性检查配置
+func DefaultConnectivityConfig() *ConnectivityConfig {
+	return &ConnectivityConfig{
+		Enabled:       true,
+		Timeout:       30 * time.Second,
+		RetryAttempts: 3,
+		RetryDelay:    5 * time.Second,
+		TestModes: TestModes{
+			ASRTestAudio:  "",
+			LLMTestPrompt: "Hello",
+			TTSTestText:   "测试",
+		},
+	}
 }

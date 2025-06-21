@@ -6,6 +6,7 @@ import (
 	"ai-server-go/src/core/providers"
 	"ai-server-go/src/core/providers/vlllm"
 	"ai-server-go/src/core/utils"
+	"ai-server-go/src/database"
 	"context"
 	"fmt"
 	"time"
@@ -13,12 +14,14 @@ import (
 
 // PoolManager 资源池管理器
 type PoolManager struct {
-	asrPool   *ResourcePool
-	llmPool   *ResourcePool
-	ttsPool   *ResourcePool
-	vlllmPool *ResourcePool
-	mcpPool   *ResourcePool
-	logger    *utils.Logger
+	asrPool       *ResourcePool
+	llmPool       *ResourcePool
+	ttsPool       *ResourcePool
+	vlllmPool     *ResourcePool
+	mcpPool       *ResourcePool
+	logger        *utils.Logger
+	configService *database.ConfigService
+	grayscaleManager *GrayscaleManager
 }
 
 // ProviderSet 提供者集合
@@ -31,15 +34,14 @@ type ProviderSet struct {
 }
 
 // NewPoolManager 创建资源池管理器
-func NewPoolManager(config *configs.Config, logger *utils.Logger) (*PoolManager, error) {
+func NewPoolManager(config *configs.Config, logger *utils.Logger, defaultModules map[string]string, deleteAudio bool, configService *database.ConfigService) (*PoolManager, error) {
 	pm := &PoolManager{
-		logger: logger,
+		logger:        logger,
+		configService: configService,
 	}
 
-	// 执行连通性检查
-	if err := pm.performConnectivityCheck(config, logger); err != nil {
-		return nil, fmt.Errorf("资源连通性检查失败: %v", err)
-	}
+	// 创建灰度发布管理器
+	pm.grayscaleManager = NewGrayscaleManager(configService, logger)
 
 	poolConfig := PoolConfig{
 		MinSize:       5,
@@ -49,11 +51,11 @@ func NewPoolManager(config *configs.Config, logger *utils.Logger) (*PoolManager,
 	}
 
 	// 检查配置是否包含所需的模块
-	selectedModule := config.SelectedModule
+	selectedModule := defaultModules
 
 	// 初始化ASR池
 	if asrType, ok := selectedModule["ASR"]; ok && asrType != "" {
-		asrFactory := NewASRFactory(asrType, config, logger)
+		asrFactory := NewASRFactory(asrType, configService, logger, deleteAudio, pm.grayscaleManager)
 		if asrFactory == nil {
 			return nil, fmt.Errorf("创建ASR工厂失败: 找不到配置 %s", asrType)
 		}
@@ -68,7 +70,7 @@ func NewPoolManager(config *configs.Config, logger *utils.Logger) (*PoolManager,
 
 	// 初始化LLM池
 	if llmType, ok := selectedModule["LLM"]; ok && llmType != "" {
-		llmFactory := NewLLMFactory(llmType, config, logger)
+		llmFactory := NewLLMFactory(llmType, configService, logger, pm.grayscaleManager)
 		if llmFactory == nil {
 			return nil, fmt.Errorf("创建LLM工厂失败: 找不到配置 %s", llmType)
 		}
@@ -83,7 +85,7 @@ func NewPoolManager(config *configs.Config, logger *utils.Logger) (*PoolManager,
 
 	// 初始化TTS池
 	if ttsType, ok := selectedModule["TTS"]; ok && ttsType != "" {
-		ttsFactory := NewTTSFactory(ttsType, config, logger)
+		ttsFactory := NewTTSFactory(ttsType, configService, logger, deleteAudio, pm.grayscaleManager)
 		if ttsFactory == nil {
 			return nil, fmt.Errorf("创建TTS工厂失败: 找不到配置 %s", ttsType)
 		}
@@ -98,7 +100,7 @@ func NewPoolManager(config *configs.Config, logger *utils.Logger) (*PoolManager,
 
 	// 初始化VLLLM池（可选）
 	if vlllmType, ok := selectedModule["VLLLM"]; ok && vlllmType != "" {
-		vlllmFactory := NewVLLLMFactory(vlllmType, config, logger)
+		vlllmFactory := NewVLLLMFactory(vlllmType, configService, logger, pm.grayscaleManager)
 		if vlllmFactory == nil {
 			logger.Warn("创建VLLLM工厂失败: 找不到配置 %s", vlllmType)
 		} else {
@@ -115,6 +117,11 @@ func NewPoolManager(config *configs.Config, logger *utils.Logger) (*PoolManager,
 		} else {
 			logger.Warn("VLLLM资源池未初始化，将使用普通LLM")
 		}
+	}
+
+	// 执行连通性检查
+	if err := pm.performConnectivityCheck(config, logger, nil, configService); err != nil {
+		return nil, fmt.Errorf("资源连通性检查失败: %v", err)
 	}
 
 	poolConfig = PoolConfig{
@@ -324,22 +331,21 @@ func (pm *PoolManager) GetStats() map[string]map[string]int {
 }
 
 // performConnectivityCheck 执行连通性检查
-func (pm *PoolManager) performConnectivityCheck(config *configs.Config, logger *utils.Logger) error {
-	// 从配置创建连通性检查配置
-	connConfig, err := ConfigFromYAML(&config.ConnectivityCheck)
-	if err != nil {
-		logger.Warn("解析连通性检查配置失败，使用默认配置: %v", err)
-		connConfig = DefaultConnectivityConfig()
+func (pm *PoolManager) performConnectivityCheck(config *configs.Config, logger *utils.Logger, connectivityConfig *ConnectivityConfig, configService *database.ConfigService) error {
+	// 使用传入的连通性检查配置
+	if connectivityConfig == nil {
+		logger.Warn("连通性检查配置为空，使用默认配置")
+		connectivityConfig = DefaultConnectivityConfig()
 	}
 
 	// 创建健康检查器
-	healthChecker := NewHealthChecker(config, connConfig, logger)
+	healthChecker := NewHealthChecker(config, configService, connectivityConfig, logger)
 
 	// 执行功能性连通性检查
-	ctx, cancel := context.WithTimeout(context.Background(), connConfig.Timeout*3) // 给功能性检查更多时间
+	ctx, cancel := context.WithTimeout(context.Background(), connectivityConfig.Timeout*3) // 给功能性检查更多时间
 	defer cancel()
 
-	err = healthChecker.CheckAllProviders(ctx, FunctionalCheck)
+	err := healthChecker.CheckAllProviders(ctx, FunctionalCheck, nil) // 暂时传入nil，实际应该从数据库获取
 
 	// 打印检查报告
 	healthChecker.PrintReport()
@@ -372,4 +378,81 @@ func (pm *PoolManager) GetDetailedStats() map[string]map[string]int {
 	}
 
 	return stats
+}
+
+// GetGrayscaleManager 获取灰度发布管理器
+func (pm *PoolManager) GetGrayscaleManager() *GrayscaleManager {
+	return pm.grayscaleManager
+}
+
+// ReloadProviderConfig 热更新指定 provider 配置
+func (pm *PoolManager) ReloadProviderConfig(category, name string) error {
+	pm.logger.Info("热更新 provider 配置: %s/%s", category, name)
+	
+	// 刷新灰度配置缓存
+	if pm.grayscaleManager != nil {
+		_ = pm.grayscaleManager.RefreshConfig(category, name)
+	}
+	
+	switch category {
+	case "ASR":
+		if pm.asrPool != nil {
+			pm.asrPool.Close()
+		}
+		factory := NewASRFactory(name, pm.configService, pm.logger, true, pm.grayscaleManager)
+		if factory == nil {
+			return fmt.Errorf("ASR provider %s 配置无效", name)
+		}
+		poolConfig := PoolConfig{MinSize: 5, MaxSize: 20, RefillSize: 3, CheckInterval: 30 * time.Second}
+		pool, err := NewResourcePool(factory, poolConfig, pm.logger)
+		if err != nil {
+			return err
+		}
+		pm.asrPool = pool
+	case "TTS":
+		if pm.ttsPool != nil {
+			pm.ttsPool.Close()
+		}
+		factory := NewTTSFactory(name, pm.configService, pm.logger, true, pm.grayscaleManager)
+		if factory == nil {
+			return fmt.Errorf("TTS provider %s 配置无效", name)
+		}
+		poolConfig := PoolConfig{MinSize: 5, MaxSize: 20, RefillSize: 3, CheckInterval: 30 * time.Second}
+		pool, err := NewResourcePool(factory, poolConfig, pm.logger)
+		if err != nil {
+			return err
+		}
+		pm.ttsPool = pool
+	case "LLM":
+		if pm.llmPool != nil {
+			pm.llmPool.Close()
+		}
+		factory := NewLLMFactory(name, pm.configService, pm.logger, pm.grayscaleManager)
+		if factory == nil {
+			return fmt.Errorf("LLM provider %s 配置无效", name)
+		}
+		poolConfig := PoolConfig{MinSize: 5, MaxSize: 20, RefillSize: 3, CheckInterval: 30 * time.Second}
+		pool, err := NewResourcePool(factory, poolConfig, pm.logger)
+		if err != nil {
+			return err
+		}
+		pm.llmPool = pool
+	case "VLLLM":
+		if pm.vlllmPool != nil {
+			pm.vlllmPool.Close()
+		}
+		factory := NewVLLLMFactory(name, pm.configService, pm.logger, pm.grayscaleManager)
+		if factory == nil {
+			return fmt.Errorf("VLLLM provider %s 配置无效", name)
+		}
+		poolConfig := PoolConfig{MinSize: 5, MaxSize: 20, RefillSize: 3, CheckInterval: 30 * time.Second}
+		pool, err := NewResourcePool(factory, poolConfig, pm.logger)
+		if err != nil {
+			return err
+		}
+		pm.vlllmPool = pool
+	default:
+		return fmt.Errorf("不支持的provider类型: %s", category)
+	}
+	return nil
 }
