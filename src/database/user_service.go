@@ -2,7 +2,6 @@ package database
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"ai-server-go/src/core/utils"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // UserService 用户管理服务
@@ -40,117 +40,47 @@ func (s *UserService) CreateUser(user *User, password string) error {
 		return fmt.Errorf("密码加密失败: %v", err)
 	}
 
-	query := `
-		INSERT INTO users (username, email, phone, nickname, avatar, password_hash, status, role)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`
+	user.PasswordHash = string(hashedPassword)
+	user.Status = "active"
+	if user.Role == "" {
+		user.Role = "user"
+	}
 
-	result, err := s.db.Exec(query,
-		user.Username,
-		user.Email,
-		user.Phone,
-		user.Nickname,
-		user.Avatar,
-		hashedPassword,
-		user.Status,
-		user.Role,
-	)
-
-	if err != nil {
+	if err := s.db.DB.Create(user).Error; err != nil {
 		return fmt.Errorf("创建用户失败: %v", err)
 	}
 
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("获取用户ID失败: %v", err)
-	}
-
-	user.ID = id
-	s.logger.Info("用户创建成功: %s (ID: %d)", user.Username, id)
+	s.logger.Info("用户创建成功: %s (ID: %d)", user.Username, user.ID)
 	return nil
 }
 
 // GetUserByID 根据ID获取用户
-func (s *UserService) GetUserByID(id int64) (*User, error) {
-	query := `SELECT * FROM users WHERE id = ?`
-
+func (s *UserService) GetUserByID(id uint) (*User, error) {
 	var user User
-	err := s.db.QueryRow(query, id).Scan(
-		&user.ID,
-		&user.Username,
-		&user.Email,
-		&user.Phone,
-		&user.Nickname,
-		&user.Avatar,
-		&user.PasswordHash,
-		&user.Status,
-		&user.Role,
-		&user.LastLoginTime,
-		&user.LastLoginIP,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.DB.First(&user, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("查询用户失败: %v", err)
 	}
-
 	return &user, nil
 }
 
 // GetUserByUsername 根据用户名获取用户
 func (s *UserService) GetUserByUsername(username string) (*User, error) {
-	query := `SELECT * FROM users WHERE username = ?`
-
 	var user User
-	err := s.db.QueryRow(query, username).Scan(
-		&user.ID,
-		&user.Username,
-		&user.Email,
-		&user.Phone,
-		&user.Nickname,
-		&user.Avatar,
-		&user.PasswordHash,
-		&user.Status,
-		&user.Role,
-		&user.LastLoginTime,
-		&user.LastLoginIP,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.DB.Where("username = ?", username).First(&user).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("查询用户失败: %v", err)
 	}
-
 	return &user, nil
 }
 
 // UpdateUser 更新用户
 func (s *UserService) UpdateUser(user *User) error {
-	query := `
-		UPDATE users 
-		SET email = ?, phone = ?, nickname = ?, avatar = ?, status = ?, role = ?
-		WHERE id = ?
-	`
-
-	_, err := s.db.Exec(query,
-		user.Email,
-		user.Phone,
-		user.Nickname,
-		user.Avatar,
-		user.Status,
-		user.Role,
-		user.ID,
-	)
-
-	if err != nil {
+	if err := s.db.DB.Save(user).Error; err != nil {
 		return fmt.Errorf("更新用户失败: %v", err)
 	}
 
@@ -159,17 +89,14 @@ func (s *UserService) UpdateUser(user *User) error {
 }
 
 // UpdatePassword 更新用户密码
-func (s *UserService) UpdatePassword(userID int64, newPassword string) error {
+func (s *UserService) UpdatePassword(userID uint, newPassword string) error {
 	// 加密新密码
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("密码加密失败: %v", err)
 	}
 
-	query := `UPDATE users SET password_hash = ? WHERE id = ?`
-
-	_, err = s.db.Exec(query, hashedPassword, userID)
-	if err != nil {
+	if err := s.db.DB.Model(&User{}).Where("id = ?", userID).Update("password_hash", string(hashedPassword)).Error; err != nil {
 		return fmt.Errorf("更新密码失败: %v", err)
 	}
 
@@ -178,11 +105,8 @@ func (s *UserService) UpdatePassword(userID int64, newPassword string) error {
 }
 
 // DeleteUser 删除用户
-func (s *UserService) DeleteUser(id int64) error {
-	query := `DELETE FROM users WHERE id = ?`
-
-	_, err := s.db.Exec(query, id)
-	if err != nil {
+func (s *UserService) DeleteUser(id uint) error {
+	if err := s.db.DB.Delete(&User{}, id).Error; err != nil {
 		return fmt.Errorf("删除用户失败: %v", err)
 	}
 
@@ -192,60 +116,40 @@ func (s *UserService) DeleteUser(id int64) error {
 
 // ListUsers 获取用户列表
 func (s *UserService) ListUsers(offset, limit int, status, role string) ([]*User, error) {
-	query := `SELECT * FROM users`
-	args := []interface{}{}
+	var users []*User
+	query := s.db.DB
 
-	conditions := []string{}
 	if status != "" {
-		conditions = append(conditions, "status = ?")
-		args = append(args, status)
+		query = query.Where("status = ?", status)
 	}
 	if role != "" {
-		conditions = append(conditions, "role = ?")
-		args = append(args, role)
+		query = query.Where("role = ?", role)
 	}
 
-	if len(conditions) > 0 {
-		query += ` WHERE ` + conditions[0]
-		for i := 1; i < len(conditions); i++ {
-			query += ` AND ` + conditions[i]
-		}
-	}
-
-	query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
-	args = append(args, limit, offset)
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
+	if err := query.Offset(offset).Limit(limit).Find(&users).Error; err != nil {
 		return nil, fmt.Errorf("查询用户列表失败: %v", err)
-	}
-	defer rows.Close()
-
-	var users []*User
-	for rows.Next() {
-		var user User
-		err := rows.Scan(
-			&user.ID,
-			&user.Username,
-			&user.Email,
-			&user.Phone,
-			&user.Nickname,
-			&user.Avatar,
-			&user.PasswordHash,
-			&user.Status,
-			&user.Role,
-			&user.LastLoginTime,
-			&user.LastLoginIP,
-			&user.CreatedAt,
-			&user.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描用户数据失败: %v", err)
-		}
-		users = append(users, &user)
 	}
 
 	return users, nil
+}
+
+// CountUsers 统计用户数量
+func (s *UserService) CountUsers(status, role string) (int64, error) {
+	var count int64
+	query := s.db.DB.Model(&User{})
+
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if role != "" {
+		query = query.Where("role = ?", role)
+	}
+
+	if err := query.Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("统计用户数量失败: %v", err)
+	}
+
+	return count, nil
 }
 
 // AuthenticateUser 用户认证
@@ -258,32 +162,33 @@ func (s *UserService) AuthenticateUser(username, password string) (*User, error)
 		return nil, fmt.Errorf("用户不存在")
 	}
 
+	s.logger.Info("开始认证用户: %s", username)
+	s.logger.Info("传入的密码: '%s'", password)
+	s.logger.Info("数据库中的哈希: '%s'", user.PasswordHash)
+
 	// 验证密码
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 	if err != nil {
+		s.logger.Error("密码验证失败: %v", err)
 		return nil, fmt.Errorf("密码错误")
 	}
 
-	// 检查用户状态
+	s.logger.Info("密码验证成功 for user: %s", username)
+
 	if user.Status != "active" {
-		return nil, fmt.Errorf("用户状态异常: %s", user.Status)
+		return nil, fmt.Errorf("用户状态异常")
 	}
 
 	return user, nil
 }
 
 // UpdateLoginInfo 更新登录信息
-func (s *UserService) UpdateLoginInfo(userID int64, ipAddress string) error {
-	query := `
-		UPDATE users 
-		SET last_login_time = ?, last_login_ip = ?
-		WHERE id = ?
-	`
-
+func (s *UserService) UpdateLoginInfo(userID uint, ipAddress string) error {
 	now := time.Now()
-	_, err := s.db.Exec(query, now, ipAddress, userID)
-
-	if err != nil {
+	if err := s.db.DB.Model(&User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"last_login_time": &now,
+		"last_login_ip":   ipAddress,
+	}).Error; err != nil {
 		return fmt.Errorf("更新登录信息失败: %v", err)
 	}
 
@@ -299,368 +204,230 @@ func (s *UserService) generateToken() (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// CreateUserAuth 创建用户认证令牌
-func (s *UserService) CreateUserAuth(userID int64, expiresAt *time.Time) (*UserAuth, error) {
+// CreateUserAuth 创建用户认证记录
+func (s *UserService) CreateUserAuth(userID uint, expiresAt *time.Time) (*UserAuth, error) {
 	token, err := s.generateToken()
 	if err != nil {
 		return nil, fmt.Errorf("生成令牌失败: %v", err)
 	}
 
 	auth := &UserAuth{
-		UserID:    userID,
-		AuthType:  "token",
-		AuthKey:   token,
-		IsActive:  true,
-		ExpiresAt: expiresAt,
+		UserID:     userID,
+		AuthType:   "token",
+		AuthKey:    token,
+		AuthSecret: "",
+		IsActive:   true,
+		ExpiresAt:  expiresAt,
 	}
 
-	query := `
-		INSERT INTO user_auth (user_id, auth_type, auth_key, is_active, expires_at)
-		VALUES (?, ?, ?, ?, ?)
-	`
-
-	result, err := s.db.Exec(query,
-		auth.UserID,
-		auth.AuthType,
-		auth.AuthKey,
-		auth.IsActive,
-		auth.ExpiresAt,
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("创建用户认证失败: %v", err)
+	if err := s.db.DB.Create(auth).Error; err != nil {
+		return nil, fmt.Errorf("创建认证记录失败: %v", err)
 	}
 
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("获取认证ID失败: %v", err)
-	}
-
-	auth.ID = id
-	s.logger.Info("用户认证创建成功: UserID %d, Token %s", auth.UserID, auth.AuthKey)
 	return auth, nil
 }
 
-// GetUserAuthByToken 根据令牌获取认证信息
+// GetUserAuthByToken 根据令牌获取用户认证记录
 func (s *UserService) GetUserAuthByToken(token string) (*UserAuth, error) {
-	query := `
-		SELECT ua.*, u.username, u.status as user_status
-		FROM user_auth ua
-		JOIN users u ON ua.user_id = u.id
-		WHERE ua.auth_key = ? AND ua.is_active = true
-	`
-
 	var auth UserAuth
-	var username, userStatus string
-	err := s.db.QueryRow(query, token).Scan(
-		&auth.ID,
-		&auth.UserID,
-		&auth.AuthType,
-		&auth.AuthKey,
-		&auth.AuthSecret,
-		&auth.IsActive,
-		&auth.ExpiresAt,
-		&auth.CreatedAt,
-		&auth.UpdatedAt,
-		&username,
-		&userStatus,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.DB.Where("auth_key = ? AND is_active = ?", token, true).First(&auth).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("查询用户认证失败: %v", err)
+		return nil, fmt.Errorf("查询认证记录失败: %v", err)
 	}
 
-	// 检查用户状态
-	if userStatus != "active" {
-		return nil, fmt.Errorf("用户状态异常: %s", userStatus)
-	}
-
-	// 检查认证是否过期
-	if auth.ExpiresAt != nil && auth.ExpiresAt.Before(time.Now()) {
-		return nil, fmt.Errorf("认证已过期")
+	// 检查是否过期
+	if auth.ExpiresAt != nil && time.Now().After(*auth.ExpiresAt) {
+		// 标记为过期
+		s.db.DB.Model(&auth).Update("is_active", false)
+		return nil, nil
 	}
 
 	return &auth, nil
 }
 
-// UpdateUserAuth 更新用户认证
-func (s *UserService) UpdateUserAuth(auth *UserAuth) error {
-	query := `
-		UPDATE user_auth 
-		SET auth_type = ?, auth_key = ?, auth_secret = ?, is_active = ?, expires_at = ?
-		WHERE id = ?
-	`
-
-	_, err := s.db.Exec(query,
-		auth.AuthType,
-		auth.AuthKey,
-		auth.AuthSecret,
-		auth.IsActive,
-		auth.ExpiresAt,
-		auth.ID,
-	)
-
-	if err != nil {
-		return fmt.Errorf("更新用户认证失败: %v", err)
+// GetUserAuthByKey 根据认证密钥获取用户认证记录
+func (s *UserService) GetUserAuthByKey(authKey string) (*UserAuth, error) {
+	var auth UserAuth
+	if err := s.db.DB.Where("auth_key = ? AND is_active = ?", authKey, true).First(&auth).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("查询认证记录失败: %v", err)
 	}
 
-	s.logger.Info("用户认证更新成功: ID %d", auth.ID)
+	// 检查是否过期
+	if auth.ExpiresAt != nil && time.Now().After(*auth.ExpiresAt) {
+		// 标记为过期
+		s.db.DB.Model(&auth).Update("is_active", false)
+		return nil, nil
+	}
+
+	return &auth, nil
+}
+
+// UpdateUserAuth 更新用户认证记录
+func (s *UserService) UpdateUserAuth(auth *UserAuth) error {
+	if err := s.db.DB.Save(auth).Error; err != nil {
+		return fmt.Errorf("更新认证记录失败: %v", err)
+	}
 	return nil
 }
 
-// DeleteUserAuth 删除用户认证
-func (s *UserService) DeleteUserAuth(id int64) error {
-	query := `DELETE FROM user_auth WHERE id = ?`
-
-	_, err := s.db.Exec(query, id)
-	if err != nil {
-		return fmt.Errorf("删除用户认证失败: %v", err)
+// DeleteUserAuth 删除用户认证记录
+func (s *UserService) DeleteUserAuth(id uint) error {
+	if err := s.db.DB.Delete(&UserAuth{}, id).Error; err != nil {
+		return fmt.Errorf("删除认证记录失败: %v", err)
 	}
-
-	s.logger.Info("用户认证删除成功: ID %d", id)
 	return nil
 }
 
 // GetUserDeviceBinding 获取用户设备绑定关系
-func (s *UserService) GetUserDeviceBinding(userID int64, deviceID int64) (*UserDevice, error) {
-	query := `SELECT * FROM user_devices WHERE user_id = ? AND device_id = ?`
-
+func (s *UserService) GetUserDeviceBinding(userID, deviceID uint) (*UserDevice, error) {
 	var userDevice UserDevice
-	err := s.db.QueryRow(query, userID, deviceID).Scan(
-		&userDevice.ID,
-		&userDevice.UserID,
-		&userDevice.DeviceID,
-		&userDevice.DeviceAlias,
-		&userDevice.IsOwner,
-		&userDevice.Permissions,
-		&userDevice.IsActive,
-		&userDevice.CreatedAt,
-		&userDevice.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.DB.Where("user_id = ? AND device_id = ?", userID, deviceID).First(&userDevice).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("查询用户设备绑定失败: %v", err)
+		return nil, fmt.Errorf("查询设备绑定关系失败: %v", err)
 	}
-
 	return &userDevice, nil
 }
 
 // BindUserDevice 绑定用户设备
-func (s *UserService) BindUserDevice(userID int64, deviceUUID string, deviceAlias string, isOwner bool, permissions map[string]interface{}) error {
-	// 检查设备是否存在
-	deviceService := NewDeviceService(s.db, s.logger)
-	device, err := deviceService.GetDeviceByUUID(deviceUUID)
-	if err != nil {
+func (s *UserService) BindUserDevice(userID uint, deviceUUID string, deviceAlias string, isOwner bool, permissions map[string]interface{}) error {
+	// 查找设备
+	var device Device
+	if err := s.db.DB.Where("device_uuid = ?", deviceUUID).First(&device).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("设备不存在")
+		}
 		return fmt.Errorf("查询设备失败: %v", err)
-	}
-	if device == nil {
-		return fmt.Errorf("设备不存在: %s", deviceUUID)
 	}
 
 	// 检查是否已绑定
-	existingBinding, err := s.GetUserDeviceBinding(userID, device.ID)
-	if err != nil {
-		return fmt.Errorf("查询设备绑定失败: %v", err)
-	}
-	if existingBinding != nil {
-		return fmt.Errorf("设备已绑定给用户")
+	var existingBinding UserDevice
+	if err := s.db.DB.Where("user_id = ? AND device_id = ?", userID, device.ID).First(&existingBinding).Error; err == nil {
+		return fmt.Errorf("设备已绑定")
 	}
 
-	// 序列化权限配置
+	// 序列化权限
 	permissionsJSON, err := json.Marshal(permissions)
 	if err != nil {
-		return fmt.Errorf("序列化权限配置失败: %v", err)
+		return fmt.Errorf("序列化权限失败: %v", err)
 	}
 
-	query := `
-		INSERT INTO user_devices (user_id, device_id, device_alias, is_owner, permissions, is_active)
-		VALUES (?, ?, ?, ?, ?, true)
-	`
-
-	_, err = s.db.Exec(query, userID, device.ID, deviceAlias, isOwner, permissionsJSON)
-	if err != nil {
-		return fmt.Errorf("绑定用户设备失败: %v", err)
+	userDevice := &UserDevice{
+		UserID:      userID,
+		DeviceID:    device.ID,
+		DeviceAlias: deviceAlias,
+		IsOwner:     isOwner,
+		Permissions: permissionsJSON,
+		IsActive:    true,
 	}
 
-	s.logger.Info("用户设备绑定成功: UserID %d, DeviceUUID %s", userID, deviceUUID)
+	if err := s.db.DB.Create(userDevice).Error; err != nil {
+		return fmt.Errorf("绑定设备失败: %v", err)
+	}
+
+	s.logger.Info("设备绑定成功: 用户ID %d, 设备UUID %s", userID, deviceUUID)
 	return nil
 }
 
 // UnbindUserDevice 解绑用户设备
-func (s *UserService) UnbindUserDevice(userID int64, deviceUUID string) error {
-	// 检查设备是否存在
-	deviceService := NewDeviceService(s.db, s.logger)
-	device, err := deviceService.GetDeviceByUUID(deviceUUID)
-	if err != nil {
+func (s *UserService) UnbindUserDevice(userID uint, deviceUUID string) error {
+	// 查找设备
+	var device Device
+	if err := s.db.DB.Where("device_uuid = ?", deviceUUID).First(&device).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("设备不存在")
+		}
 		return fmt.Errorf("查询设备失败: %v", err)
 	}
-	if device == nil {
-		return fmt.Errorf("设备不存在: %s", deviceUUID)
+
+	// 删除绑定关系
+	if err := s.db.DB.Where("user_id = ? AND device_id = ?", userID, device.ID).Delete(&UserDevice{}).Error; err != nil {
+		return fmt.Errorf("解绑设备失败: %v", err)
 	}
 
-	query := `DELETE FROM user_devices WHERE user_id = ? AND device_id = ?`
-
-	_, err = s.db.Exec(query, userID, device.ID)
-	if err != nil {
-		return fmt.Errorf("解绑用户设备失败: %v", err)
-	}
-
-	s.logger.Info("用户设备解绑成功: UserID %d, DeviceUUID %s", userID, deviceUUID)
+	s.logger.Info("设备解绑成功: 用户ID %d, 设备UUID %s", userID, deviceUUID)
 	return nil
 }
 
 // GetUserDevices 获取用户设备列表
-func (s *UserService) GetUserDevices(userID int64) ([]*UserDevice, error) {
-	query := `
-		SELECT ud.*, d.device_uuid, d.oui, d.sn, d.device_name, d.device_type, d.device_model, 
-		       d.firmware_version, d.hardware_version, d.status, d.last_online_time, d.last_ip_address,
-		       d.created_at as device_created_at, d.updated_at as device_updated_at
-		FROM user_devices ud
-		JOIN devices d ON ud.device_id = d.id
-		WHERE ud.user_id = ? AND ud.is_active = true
-		ORDER BY ud.created_at DESC
-	`
-
-	rows, err := s.db.Query(query, userID)
-	if err != nil {
+func (s *UserService) GetUserDevices(userID uint) ([]*UserDevice, error) {
+	var userDevices []*UserDevice
+	if err := s.db.DB.Where("user_id = ? AND is_active = ?", userID, true).
+		Preload("Device").
+		Find(&userDevices).Error; err != nil {
 		return nil, fmt.Errorf("查询用户设备失败: %v", err)
 	}
-	defer rows.Close()
-
-	var userDevices []*UserDevice
-	for rows.Next() {
-		var ud UserDevice
-		var device Device
-		var deviceCreatedAt, deviceUpdatedAt time.Time
-		err := rows.Scan(
-			&ud.ID,
-			&ud.UserID,
-			&ud.DeviceID,
-			&ud.DeviceAlias,
-			&ud.IsOwner,
-			&ud.Permissions,
-			&ud.IsActive,
-			&ud.CreatedAt,
-			&ud.UpdatedAt,
-			&device.DeviceUUID,
-			&device.OUI,
-			&device.SN,
-			&device.DeviceName,
-			&device.DeviceType,
-			&device.DeviceModel,
-			&device.FirmwareVersion,
-			&device.HardwareVersion,
-			&device.Status,
-			&device.LastOnlineTime,
-			&device.LastIPAddress,
-			&deviceCreatedAt,
-			&deviceUpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描用户设备数据失败: %v", err)
-		}
-		device.ID = ud.DeviceID
-		device.CreatedAt = deviceCreatedAt
-		device.UpdatedAt = deviceUpdatedAt
-		ud.Device = &device
-		userDevices = append(userDevices, &ud)
-	}
-
 	return userDevices, nil
 }
 
-// GetUserCapabilities 获取用户AI能力配置
-func (s *UserService) GetUserCapabilities(userID int64) ([]*UserCapability, error) {
-	query := `
-		SELECT uc.*, ac.capability_name, ac.capability_type, ac.display_name, ac.description
-		FROM user_capabilities uc
-		JOIN ai_capabilities ac ON uc.capability_id = ac.id
-		WHERE uc.user_id = ? AND uc.is_active = true
-		ORDER BY ac.capability_name, ac.capability_type
-	`
-
-	rows, err := s.db.Query(query, userID)
-	if err != nil {
+// GetUserCapabilities 获取用户AI能力列表
+func (s *UserService) GetUserCapabilities(userID uint) ([]*UserCapability, error) {
+	var userCapabilities []*UserCapability
+	if err := s.db.DB.Where("user_id = ? AND is_active = ?", userID, true).
+		Preload("Capability").
+		Find(&userCapabilities).Error; err != nil {
 		return nil, fmt.Errorf("查询用户AI能力失败: %v", err)
 	}
-	defer rows.Close()
-
-	var userCapabilities []*UserCapability
-	for rows.Next() {
-		var uc UserCapability
-		var ac AICapability
-		err := rows.Scan(
-			&uc.ID,
-			&uc.UserID,
-			&uc.CapabilityID,
-			&uc.ConfigData,
-			&uc.IsActive,
-			&uc.CreatedAt,
-			&uc.UpdatedAt,
-			&ac.CapabilityName,
-			&ac.CapabilityType,
-			&ac.DisplayName,
-			&ac.Description,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描用户AI能力数据失败: %v", err)
-		}
-		uc.Capability = &ac
-		userCapabilities = append(userCapabilities, &uc)
-	}
-
 	return userCapabilities, nil
 }
 
-// SetUserCapability 设置用户AI能力配置
-func (s *UserService) SetUserCapability(userID int64, capabilityName, capabilityType string, config map[string]interface{}) error {
-	// 获取AI能力ID
-	configService := NewConfigService(s.db, s.logger)
-	capability, err := configService.GetAICapability(capabilityName, capabilityType)
-	if err != nil {
-		return fmt.Errorf("获取AI能力失败: %v", err)
-	}
-	if capability == nil {
-		return fmt.Errorf("AI能力不存在: %s/%s", capabilityName, capabilityType)
+// SetUserCapability 设置用户AI能力
+func (s *UserService) SetUserCapability(userID uint, capabilityName, capabilityType string, config map[string]interface{}) error {
+	// 查找AI能力
+	var capability AICapability
+	if err := s.db.DB.Where("capability_name = ? AND capability_type = ?", capabilityName, capabilityType).First(&capability).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("AI能力不存在")
+		}
+		return fmt.Errorf("查询AI能力失败: %v", err)
 	}
 
-	// 序列化配置数据
+	// 序列化配置
 	configJSON, err := json.Marshal(config)
 	if err != nil {
-		return fmt.Errorf("序列化配置数据失败: %v", err)
+		return fmt.Errorf("序列化配置失败: %v", err)
 	}
 
-	query := `
-		INSERT INTO user_capabilities (user_id, capability_id, config_data, is_active)
-		VALUES (?, ?, ?, true)
-		ON DUPLICATE KEY UPDATE 
-		config_data = VALUES(config_data),
-		is_active = VALUES(is_active)
-	`
-
-	_, err = s.db.Exec(query, userID, capability.ID, configJSON)
-	if err != nil {
-		return fmt.Errorf("设置用户AI能力失败: %v", err)
+	// 查找现有配置
+	var userCapability UserCapability
+	if err := s.db.DB.Where("user_id = ? AND capability_id = ?", userID, capability.ID).First(&userCapability).Error; err == nil {
+		// 更新现有配置
+		userCapability.ConfigData = configJSON
+		userCapability.IsActive = true
+		if err := s.db.DB.Save(&userCapability).Error; err != nil {
+			return fmt.Errorf("更新用户AI能力失败: %v", err)
+		}
+	} else {
+		// 创建新配置
+		userCapability = UserCapability{
+			UserID:       userID,
+			CapabilityID: capability.ID,
+			ConfigData:   configJSON,
+			IsActive:     true,
+		}
+		if err := s.db.DB.Create(&userCapability).Error; err != nil {
+			return fmt.Errorf("创建用户AI能力失败: %v", err)
+		}
 	}
 
-	s.logger.Info("用户AI能力设置成功: UserID %d, Capability %s/%s", userID, capabilityName, capabilityType)
+	s.logger.Info("用户AI能力设置成功: 用户ID %d, 能力 %s", userID, capabilityName)
 	return nil
 }
 
 // GetUserWithDevices 获取用户及其设备
-func (s *UserService) GetUserWithDevices(userID int64) (*UserWithDevices, error) {
+func (s *UserService) GetUserWithDevices(userID uint) (*UserWithDevices, error) {
 	user, err := s.GetUserByID(userID)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
-		return nil, fmt.Errorf("用户不存在: %d", userID)
+		return nil, fmt.Errorf("用户不存在")
 	}
 
 	devices, err := s.GetUserDevices(userID)
@@ -675,13 +442,13 @@ func (s *UserService) GetUserWithDevices(userID int64) (*UserWithDevices, error)
 }
 
 // GetUserWithCapabilities 获取用户及其AI能力
-func (s *UserService) GetUserWithCapabilities(userID int64) (*UserWithCapabilities, error) {
+func (s *UserService) GetUserWithCapabilities(userID uint) (*UserWithCapabilities, error) {
 	user, err := s.GetUserByID(userID)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
-		return nil, fmt.Errorf("用户不存在: %d", userID)
+		return nil, fmt.Errorf("用户不存在")
 	}
 
 	capabilities, err := s.GetUserCapabilities(userID)
@@ -695,88 +462,43 @@ func (s *UserService) GetUserWithCapabilities(userID int64) (*UserWithCapabiliti
 	}, nil
 }
 
-// GetUserAuthByKey 根据认证密钥获取用户认证信息
-func (s *UserService) GetUserAuthByKey(authKey string) (*UserAuth, error) {
-	query := `SELECT * FROM user_auth WHERE auth_key = ? AND is_active = 1`
-
-	var auth UserAuth
-	err := s.db.QueryRow(query, authKey).Scan(
-		&auth.ID,
-		&auth.UserID,
-		&auth.AuthType,
-		&auth.AuthKey,
-		&auth.AuthSecret,
-		&auth.IsActive,
-		&auth.ExpiresAt,
-		&auth.CreatedAt,
-		&auth.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("查询用户认证失败: %v", err)
-	}
-
-	return &auth, nil
-}
-
 // GetUserStats 获取用户统计信息
-func (s *UserService) GetUserStats(userID int64) (map[string]interface{}, error) {
-	stats := make(map[string]interface{})
+func (s *UserService) GetUserStats(userID uint) (map[string]interface{}, error) {
+	var stats map[string]interface{}
 
-	// 获取设备数量
-	var deviceCount int
-	query := `SELECT COUNT(*) FROM user_devices WHERE user_id = ? AND is_active = 1`
-	err := s.db.QueryRow(query, userID).Scan(&deviceCount)
-	if err != nil {
-		return nil, fmt.Errorf("获取设备数量失败: %v", err)
-	}
-	stats["device_count"] = deviceCount
-
-	// 获取AI能力数量
-	var capabilityCount int
-	query = `SELECT COUNT(*) FROM user_capabilities WHERE user_id = ? AND is_active = 1`
-	err = s.db.QueryRow(query, userID).Scan(&capabilityCount)
-	if err != nil {
-		return nil, fmt.Errorf("获取AI能力数量失败: %v", err)
-	}
-	stats["capability_count"] = capabilityCount
-
-	// 获取会话数量（最近30天）
-	var sessionCount int
-	query = `SELECT COUNT(*) FROM sessions WHERE user_id = ? AND start_time >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
-	err = s.db.QueryRow(query, userID).Scan(&sessionCount)
-	if err != nil {
-		return nil, fmt.Errorf("获取会话数量失败: %v", err)
-	}
-	stats["session_count_30d"] = sessionCount
-
-	// 获取使用统计（最近30天）
-	var totalRequests, successRequests, errorRequests int
-	query = `SELECT 
-		SUM(request_count) as total_requests,
-		SUM(success_count) as success_requests,
-		SUM(error_count) as error_requests
-		FROM usage_stats 
-		WHERE user_id = ? AND usage_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
-
-	err = s.db.QueryRow(query, userID).Scan(&totalRequests, &successRequests, &errorRequests)
-	if err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("获取使用统计失败: %v", err)
+	// 统计设备数量
+	var deviceCount int64
+	if err := s.db.DB.Model(&UserDevice{}).Where("user_id = ? AND is_active = ?", userID, true).Count(&deviceCount).Error; err != nil {
+		return nil, fmt.Errorf("统计设备数量失败: %v", err)
 	}
 
-	stats["total_requests_30d"] = totalRequests
-	stats["success_requests_30d"] = successRequests
-	stats["error_requests_30d"] = errorRequests
+	// 统计AI能力数量
+	var capabilityCount int64
+	if err := s.db.DB.Model(&UserCapability{}).Where("user_id = ? AND is_active = ?", userID, true).Count(&capabilityCount).Error; err != nil {
+		return nil, fmt.Errorf("统计AI能力数量失败: %v", err)
+	}
 
-	// 计算成功率
-	if totalRequests > 0 {
-		stats["success_rate_30d"] = float64(successRequests) / float64(totalRequests) * 100
-	} else {
-		stats["success_rate_30d"] = 0.0
+	// 统计会话数量
+	var sessionCount int64
+	if err := s.db.DB.Model(&Session{}).Where("user_id = ?", userID).Count(&sessionCount).Error; err != nil {
+		return nil, fmt.Errorf("统计会话数量失败: %v", err)
+	}
+
+	stats = map[string]interface{}{
+		"device_count":     deviceCount,
+		"capability_count": capabilityCount,
+		"session_count":    sessionCount,
 	}
 
 	return stats, nil
+}
+
+// ResetPassword 重置用户密码
+func (s *UserService) ResetPassword(id int, newPassword string) error {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	result := s.db.DB.Model(&User{}).Where("id = ?", id).Update("password", hashedPassword)
+	return result.Error
 }

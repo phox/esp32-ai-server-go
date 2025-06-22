@@ -3,185 +3,201 @@ package database
 import (
 	"encoding/json"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // User 用户模型
 type User struct {
-	ID            int64      `json:"id" db:"id"`
-	Username      string     `json:"username" db:"username"`
-	Email         string     `json:"email" db:"email"`
-	Phone         string     `json:"phone" db:"phone"`
-	PasswordHash  string     `json:"-" db:"password_hash"`
-	Salt          string     `json:"-" db:"salt"`
-	Nickname      string     `json:"nickname" db:"nickname"`
-	Avatar        string     `json:"avatar" db:"avatar"`
-	Status        string     `json:"status" db:"status"`
-	Role          string     `json:"role" db:"role"`
-	LastLoginTime *time.Time `json:"last_login_time" db:"last_login_time"`
-	LastLoginIP   string     `json:"last_login_ip" db:"last_login_ip"`
-	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	Username      string     `json:"username" gorm:"uniqueIndex;size:50;not null"`
+	Email         string     `json:"email" gorm:"uniqueIndex;size:100"`
+	Phone         string     `json:"phone" gorm:"size:20"`
+	PasswordHash  string     `json:"-" gorm:"size:255;not null"`
+	Salt          string     `json:"-" gorm:"size:50"`
+	Nickname      string     `json:"nickname" gorm:"size:50"`
+	Avatar        string     `json:"avatar" gorm:"size:255"`
+	Status        string     `json:"status" gorm:"size:20;default:'active'"`
+	Role          string     `json:"role" gorm:"size:20;default:'user'"`
+	LastLoginTime *time.Time `json:"last_login_time"`
+	LastLoginIP   string     `json:"last_login_ip" gorm:"size:45"`
+
+	// 关联关系
+	UserAuths        []UserAuth       `json:"user_auths,omitempty" gorm:"foreignKey:UserID"`
+	UserDevices      []UserDevice     `json:"user_devices,omitempty" gorm:"foreignKey:UserID"`
+	UserCapabilities []UserCapability `json:"user_capabilities,omitempty" gorm:"foreignKey:UserID"`
+	Sessions         []Session        `json:"sessions,omitempty" gorm:"foreignKey:UserID"`
+	UsageStats       []UsageStats     `json:"usage_stats,omitempty" gorm:"foreignKey:UserID"`
 }
 
 // UserAuth 用户认证模型
 type UserAuth struct {
-	ID         int64      `json:"id" db:"id"`
-	UserID     int64      `json:"user_id" db:"user_id"`
-	AuthType   string     `json:"auth_type" db:"auth_type"`
-	AuthKey    string     `json:"auth_key" db:"auth_key"`
-	AuthSecret string     `json:"auth_secret" db:"auth_secret"`
-	IsActive   bool       `json:"is_active" db:"is_active"`
-	ExpiresAt  *time.Time `json:"expires_at" db:"expires_at"`
-	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	UserID     uint       `json:"user_id" gorm:"not null;index"`
+	AuthType   string     `json:"auth_type" gorm:"size:20;not null"`
+	AuthKey    string     `json:"auth_key" gorm:"size:255;not null;uniqueIndex"`
+	AuthSecret string     `json:"auth_secret" gorm:"size:255"`
+	IsActive   bool       `json:"is_active" gorm:"default:true"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+
+	// 关联关系
+	User User `json:"user,omitempty" gorm:"foreignKey:UserID"`
 }
 
 // UserDevice 用户设备绑定模型
 type UserDevice struct {
-	ID          int64           `json:"id" db:"id"`
-	UserID      int64           `json:"user_id" db:"user_id"`
-	DeviceID    int64           `json:"device_id" db:"device_id"`
-	DeviceAlias string          `json:"device_alias" db:"device_alias"`
-	IsOwner     bool            `json:"is_owner" db:"is_owner"`
-	Permissions json.RawMessage `json:"permissions" db:"permissions"`
-	IsActive    bool            `json:"is_active" db:"is_active"`
-	CreatedAt   time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	UserID      uint            `json:"user_id" gorm:"not null;index"`
+	DeviceID    uint            `json:"device_id" gorm:"not null;index"`
+	DeviceAlias string          `json:"device_alias" gorm:"size:100"`
+	IsOwner     bool            `json:"is_owner" gorm:"default:false"`
+	Permissions json.RawMessage `json:"permissions" gorm:"type:json"`
+	IsActive    bool            `json:"is_active" gorm:"default:true"`
 
-	// 关联查询字段
-	Device *Device `json:"device,omitempty"`
-	User   *User   `json:"user,omitempty"`
+	// 关联关系
+	Device Device `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
+	User   User   `json:"user,omitempty" gorm:"foreignKey:UserID"`
 }
 
 // UserCapability 用户AI能力模型
 type UserCapability struct {
-	ID           int64           `json:"id" db:"id"`
-	UserID       int64           `json:"user_id" db:"user_id"`
-	CapabilityID int64           `json:"capability_id" db:"capability_id"`
-	ConfigData   json.RawMessage `json:"config_data" db:"config_data"`
-	IsActive     bool            `json:"is_active" db:"is_active"`
-	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	UserID       uint            `json:"user_id" gorm:"not null;index"`
+	CapabilityID uint            `json:"capability_id" gorm:"not null;index"`
+	ConfigData   json.RawMessage `json:"config_data" gorm:"type:json"`
+	IsActive     bool            `json:"is_active" gorm:"default:true"`
 
-	// 关联查询字段
-	Capability *AICapability `json:"capability,omitempty"`
+	// 关联关系
+	Capability AICapability `json:"capability,omitempty" gorm:"foreignKey:CapabilityID"`
+	User       User         `json:"user,omitempty" gorm:"foreignKey:UserID"`
 }
 
 // Device 设备模型
 type Device struct {
-	ID              int64      `json:"id" db:"id"`
-	DeviceUUID      string     `json:"device_uuid" db:"device_uuid"`
-	OUI             string     `json:"oui" db:"oui"`
-	SN              string     `json:"sn" db:"sn"`
-	DeviceName      string     `json:"device_name" db:"device_name"`
-	DeviceType      string     `json:"device_type" db:"device_type"`
-	DeviceModel     string     `json:"device_model" db:"device_model"`
-	FirmwareVersion string     `json:"firmware_version" db:"firmware_version"`
-	HardwareVersion string     `json:"hardware_version" db:"hardware_version"`
-	Status          string     `json:"status" db:"status"`
-	LastOnlineTime  *time.Time `json:"last_online_time" db:"last_online_time"`
-	LastIPAddress   string     `json:"last_ip_address" db:"last_ip_address"`
-	CreatedAt       time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	DeviceUUID      string     `json:"device_uuid" gorm:"uniqueIndex;size:100;not null"`
+	OUI             string     `json:"oui" gorm:"size:8;not null"`
+	SN              string     `json:"sn" gorm:"size:50;not null"`
+	DeviceName      string     `json:"device_name" gorm:"size:100;not null"`
+	DeviceType      string     `json:"device_type" gorm:"size:50"`
+	DeviceModel     string     `json:"device_model" gorm:"size:50"`
+	FirmwareVersion string     `json:"firmware_version" gorm:"size:20"`
+	HardwareVersion string     `json:"hardware_version" gorm:"size:20"`
+	Status          string     `json:"status" gorm:"size:20;default:'offline'"`
+	LastOnlineTime  *time.Time `json:"last_online_time"`
+	LastIPAddress   string     `json:"last_ip_address" gorm:"size:45"`
+
+	// 关联关系
+	DeviceAuths        []DeviceAuth       `json:"device_auths,omitempty" gorm:"foreignKey:DeviceID"`
+	UserDevices        []UserDevice       `json:"user_devices,omitempty" gorm:"foreignKey:DeviceID"`
+	DeviceCapabilities []DeviceCapability `json:"device_capabilities,omitempty" gorm:"foreignKey:DeviceID"`
+	Sessions           []Session          `json:"sessions,omitempty" gorm:"foreignKey:DeviceID"`
+	UsageStats         []UsageStats       `json:"usage_stats,omitempty" gorm:"foreignKey:DeviceID"`
 }
 
 // DeviceAuth 设备认证模型
 type DeviceAuth struct {
-	ID         int64      `json:"id" db:"id"`
-	DeviceID   int64      `json:"device_id" db:"device_id"`
-	AuthType   string     `json:"auth_type" db:"auth_type"`
-	AuthKey    string     `json:"auth_key" db:"auth_key"`
-	AuthSecret string     `json:"auth_secret" db:"auth_secret"`
-	IsActive   bool       `json:"is_active" db:"is_active"`
-	ExpiresAt  *time.Time `json:"expires_at" db:"expires_at"`
-	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	DeviceID   uint       `json:"device_id" gorm:"not null;index"`
+	AuthType   string     `json:"auth_type" gorm:"size:20;not null"`
+	AuthKey    string     `json:"auth_key" gorm:"size:255;not null;uniqueIndex"`
+	AuthSecret string     `json:"auth_secret" gorm:"size:255"`
+	IsActive   bool       `json:"is_active" gorm:"default:true"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+
+	// 关联关系
+	Device Device `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
 }
 
 // AICapability AI能力模型
 type AICapability struct {
-	ID             int64           `json:"id" db:"id"`
-	CapabilityName string          `json:"capability_name" db:"capability_name"`
-	CapabilityType string          `json:"capability_type" db:"capability_type"`
-	DisplayName    string          `json:"display_name" db:"display_name"`
-	Description    string          `json:"description" db:"description"`
-	ConfigSchema   json.RawMessage `json:"config_schema" db:"config_schema"`
-	IsGlobal       bool            `json:"is_global" db:"is_global"`
-	IsActive       bool            `json:"is_active" db:"is_active"`
-	CreatedAt      time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	CapabilityName string          `json:"capability_name" gorm:"size:50;not null;uniqueIndex"`
+	CapabilityType string          `json:"capability_type" gorm:"size:20;not null"`
+	DisplayName    string          `json:"display_name" gorm:"size:100;not null"`
+	Description    string          `json:"description" gorm:"size:500"`
+	ConfigSchema   json.RawMessage `json:"config_schema" gorm:"type:json"`
+	IsGlobal       bool            `json:"is_global" gorm:"default:false"`
+	IsActive       bool            `json:"is_active" gorm:"default:true"`
+
+	// 关联关系
+	UserCapabilities   []UserCapability   `json:"user_capabilities,omitempty" gorm:"foreignKey:CapabilityID"`
+	DeviceCapabilities []DeviceCapability `json:"device_capabilities,omitempty" gorm:"foreignKey:CapabilityID"`
 }
 
 // DeviceCapability 设备AI能力关联模型
 type DeviceCapability struct {
-	ID           int64           `json:"id" db:"id"`
-	DeviceID     int64           `json:"device_id" db:"device_id"`
-	CapabilityID int64           `json:"capability_id" db:"capability_id"`
-	Priority     int             `json:"priority" db:"priority"`
-	ConfigData   json.RawMessage `json:"config_data" db:"config_data"`
-	IsEnabled    bool            `json:"is_enabled" db:"is_enabled"`
-	CreatedAt    time.Time       `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	DeviceID     uint            `json:"device_id" gorm:"not null;index"`
+	CapabilityID uint            `json:"capability_id" gorm:"not null;index"`
+	Priority     int             `json:"priority" gorm:"default:0"`
+	ConfigData   json.RawMessage `json:"config_data" gorm:"type:json"`
+	IsEnabled    bool            `json:"is_enabled" gorm:"default:true"`
 
-	// 关联查询字段
-	Capability *AICapability `json:"capability,omitempty"`
+	// 关联关系
+	Capability AICapability `json:"capability,omitempty" gorm:"foreignKey:CapabilityID"`
+	Device     Device       `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
 }
 
 // GlobalConfig 全局配置模型
 type GlobalConfig struct {
-	ID          int64     `json:"id" db:"id"`
-	ConfigKey   string    `json:"config_key" db:"config_key"`
-	ConfigValue string    `json:"config_value" db:"config_value"`
-	ConfigType  string    `json:"config_type" db:"config_type"`
-	Description string    `json:"description" db:"description"`
-	IsSystem    bool      `json:"is_system" db:"is_system"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	ConfigKey   string `json:"config_key" gorm:"size:100;not null;uniqueIndex"`
+	ConfigValue string `json:"config_value" gorm:"type:text"`
+	ConfigType  string `json:"config_type" gorm:"size:20;default:'string'"`
+	Description string `json:"description" gorm:"size:500"`
+	IsSystem    bool   `json:"is_system" gorm:"default:false"`
 }
 
 // SystemConfig 系统配置模型
 type SystemConfig struct {
-	ID             int64     `json:"id" db:"id"`
-	ConfigCategory string    `json:"config_category" db:"config_category"`
-	ConfigKey      string    `json:"config_key" db:"config_key"`
-	ConfigValue    string    `json:"config_value" db:"config_value"`
-	ConfigType     string    `json:"config_type" db:"config_type"`
-	Description    string    `json:"description" db:"description"`
-	IsDefault      bool      `json:"is_default" db:"is_default"`
-	CreatedBy      *int64    `json:"created_by" db:"created_by"`
-	UpdatedBy      *int64    `json:"updated_by" db:"updated_by"`
-	CreatedAt      time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	ConfigCategory string `json:"config_category" gorm:"size:50;not null;index"`
+	ConfigKey      string `json:"config_key" gorm:"size:100;not null;index"`
+	ConfigValue    string `json:"config_value" gorm:"type:text"`
+	ConfigType     string `json:"config_type" gorm:"size:20;default:'string'"`
+	Description    string `json:"description" gorm:"size:500"`
+	IsDefault      bool   `json:"is_default" gorm:"default:false"`
+	CreatedBy      *uint  `json:"created_by"`
+	UpdatedBy      *uint  `json:"updated_by"`
+
+	// 关联关系
+	Creator User `json:"creator,omitempty" gorm:"foreignKey:CreatedBy"`
+	Updater User `json:"updater,omitempty" gorm:"foreignKey:UpdatedBy"`
 }
 
 // Session 会话模型
 type Session struct {
-	ID           int64      `json:"id" db:"id"`
-	UserID       *int64     `json:"user_id" db:"user_id"`
-	DeviceID     int64      `json:"device_id" db:"device_id"`
-	SessionID    string     `json:"session_id" db:"session_id"`
-	ClientID     string     `json:"client_id" db:"client_id"`
-	StartTime    time.Time  `json:"start_time" db:"start_time"`
-	EndTime      *time.Time `json:"end_time" db:"end_time"`
-	Status       string     `json:"status" db:"status"`
-	MessageCount int        `json:"message_count" db:"message_count"`
-	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	UserID       *uint      `json:"user_id" gorm:"index"`
+	DeviceID     uint       `json:"device_id" gorm:"not null;index"`
+	SessionID    string     `json:"session_id" gorm:"size:100;not null;uniqueIndex"`
+	ClientID     string     `json:"client_id" gorm:"size:100;not null"`
+	StartTime    time.Time  `json:"start_time" gorm:"not null"`
+	EndTime      *time.Time `json:"end_time"`
+	Status       string     `json:"status" gorm:"size:20;default:'active'"`
+	MessageCount int        `json:"message_count" gorm:"default:0"`
+
+	// 关联关系
+	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Device Device `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
 }
 
 // UsageStats 使用统计模型
 type UsageStats struct {
-	ID             int64     `json:"id" db:"id"`
-	UserID         *int64    `json:"user_id" db:"user_id"`
-	DeviceID       int64     `json:"device_id" db:"device_id"`
-	CapabilityName string    `json:"capability_name" db:"capability_name"`
-	UsageDate      time.Time `json:"usage_date" db:"usage_date"`
-	RequestCount   int       `json:"request_count" db:"request_count"`
-	SuccessCount   int       `json:"success_count" db:"success_count"`
-	ErrorCount     int       `json:"error_count" db:"error_count"`
-	TotalDuration  int       `json:"total_duration" db:"total_duration"`
-	CreatedAt      time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
+	gorm.Model
+	UserID         *uint     `json:"user_id" gorm:"index"`
+	DeviceID       uint      `json:"device_id" gorm:"not null;index"`
+	CapabilityName string    `json:"capability_name" gorm:"size:50;not null"`
+	UsageDate      time.Time `json:"usage_date" gorm:"not null;index"`
+	RequestCount   int       `json:"request_count" gorm:"default:0"`
+	SuccessCount   int       `json:"success_count" gorm:"default:0"`
+	ErrorCount     int       `json:"error_count" gorm:"default:0"`
+	TotalDuration  int       `json:"total_duration" gorm:"default:0"`
+
+	// 关联关系
+	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Device Device `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
 }
 
 // DeviceWithCapabilities 设备及其AI能力
@@ -213,14 +229,14 @@ type CapabilityConfig struct {
 
 // DeviceCapabilityConfig 设备AI能力配置
 type DeviceCapabilityConfig struct {
-	DeviceID      int64              `json:"device_id"`
+	DeviceID      uint               `json:"device_id"`
 	Capabilities  []CapabilityConfig `json:"capabilities"`
 	GlobalConfigs map[string]string  `json:"global_configs"`
 }
 
 // UserCapabilityConfig 用户AI能力配置
 type UserCapabilityConfig struct {
-	UserID        int64              `json:"user_id"`
+	UserID        uint               `json:"user_id"`
 	Capabilities  []CapabilityConfig `json:"capabilities"`
 	GlobalConfigs map[string]string  `json:"global_configs"`
 }
@@ -239,7 +255,7 @@ type RegisterRequest struct {
 	Nickname string `json:"nickname"`
 }
 
-// UserDeviceRequest 用户设备绑定请求
+// UserDeviceRequest 用户设备请求
 type UserDeviceRequest struct {
 	DeviceUUID  string                 `json:"device_uuid" binding:"required"`
 	DeviceAlias string                 `json:"device_alias"`
@@ -300,39 +316,34 @@ type AICapabilityRequest struct {
 	IsGlobal    bool                   `json:"is_global"`
 }
 
-// ProviderConfig AI Provider通用配置结构体
-// 用于TTS、LLM、VLLLM等
-// config_value字段存储为JSON
-
+// ProviderConfig AI提供商配置模型
 type ProviderConfig struct {
-	ID          int64                  `json:"id" db:"id"`             // 主键ID
-	Category    string                 `json:"category" db:"category"` // 类别（ASR/TTS/LLM/VLLLM）
-	Name        string                 `json:"name"`                   // provider名称（如 EdgeTTS、OllamaLLM）
-	Type        string                 `json:"type"`                   // provider类型（如 edge、ollama、openai等）
-	Version     string                 `json:"version"`                // 版本号（如 v1、v2）
-	Weight      int                    `json:"weight"`                 // 流量权重（0-100）
-	IsActive    bool                   `json:"is_active"`              // 是否启用
-	IsDefault   bool                   `json:"is_default"`             // 是否为默认版本
-	ModelName   string                 `json:"model_name"`             // 模型名称
-	BaseURL     string                 `json:"url"`                    // API地址
-	APIKey      string                 `json:"api_key"`                // API密钥
-	Voice       string                 `json:"voice"`                  // 语音（TTS专用）
-	Format      string                 `json:"format"`                 // 音频格式（TTS专用）
-	OutputDir   string                 `json:"output_dir"`             // 输出目录（TTS专用）
-	AppID       string                 `json:"appid"`                  // 应用ID（TTS专用）
-	Token       string                 `json:"token"`                  // Token（TTS专用）
-	Cluster     string                 `json:"cluster"`                // 集群（TTS专用）
-	Temperature float64                `json:"temperature"`            // LLM/VLLLM参数
-	MaxTokens   int                    `json:"max_tokens"`             // LLM/VLLLM参数
-	TopP        float64                `json:"top_p"`                  // LLM/VLLLM参数
-	Security    map[string]interface{} `json:"security"`               // VLLLM图片安全参数
-	Extra       map[string]interface{} `json:"extra"`                  // 其他扩展参数
-	HealthScore float64                `json:"health_score"`           // 健康评分（0-100）
-	CreatedAt   time.Time              `json:"created_at"`             // 创建时间
-	UpdatedAt   time.Time              `json:"updated_at"`             // 更新时间
+	gorm.Model
+	Category    string          `json:"category" gorm:"size:20;not null;index"` // 类别（ASR/TTS/LLM/VLLLM）
+	Name        string          `json:"name" gorm:"size:50;not null"`           // provider名称（如 EdgeTTS、OllamaLLM）
+	Type        string          `json:"type" gorm:"size:20;not null"`           // provider类型（如 edge、ollama、openai等）
+	Version     string          `json:"version" gorm:"size:20;default:'v1'"`    // 版本号（如 v1、v2）
+	Weight      int             `json:"weight" gorm:"default:100"`              // 流量权重（0-100）
+	IsActive    bool            `json:"is_active" gorm:"default:true"`          // 是否启用
+	IsDefault   bool            `json:"is_default" gorm:"default:false"`        // 是否为默认版本
+	ModelName   string          `json:"model_name" gorm:"size:100"`             // 模型名称
+	BaseURL     string          `json:"url" gorm:"size:255"`                    // API地址
+	APIKey      string          `json:"api_key" gorm:"size:255"`                // API密钥
+	Voice       string          `json:"voice" gorm:"size:50"`                   // 语音（TTS专用）
+	Format      string          `json:"format" gorm:"size:20"`                  // 音频格式（TTS专用）
+	OutputDir   string          `json:"output_dir" gorm:"size:255"`             // 输出目录（TTS专用）
+	AppID       string          `json:"appid" gorm:"size:100"`                  // 应用ID（TTS专用）
+	Token       string          `json:"token" gorm:"size:255"`                  // Token（TTS专用）
+	Cluster     string          `json:"cluster" gorm:"size:50"`                 // 集群（TTS专用）
+	Temperature float64         `json:"temperature" gorm:"default:0.7"`         // LLM/VLLLM参数
+	MaxTokens   int             `json:"max_tokens" gorm:"default:2048"`         // LLM/VLLLM参数
+	TopP        float64         `json:"top_p" gorm:"default:0.9"`               // LLM/VLLLM参数
+	Security    json.RawMessage `json:"security" gorm:"type:json"`              // VLLLM图片安全参数
+	Extra       json.RawMessage `json:"extra" gorm:"type:json"`                 // 其他扩展参数
+	HealthScore float64         `json:"health_score" gorm:"default:100"`        // 健康评分（0-100）
 }
 
-// ProviderVersion 灰度发布版本信息
+// ProviderVersion 提供商版本信息
 type ProviderVersion struct {
 	Category    string    `json:"category"`     // 类别（ASR/TTS/LLM/VLLLM）
 	Name        string    `json:"name"`         // provider名称

@@ -1,212 +1,159 @@
 package database
 
 import (
-	"database/sql"
 	"fmt"
-	"strings"
+	"log"
 	"time"
 
 	"ai-server-go/src/configs"
-	"ai-server-go/src/core/utils"
 
-	_ "github.com/go-sql-driver/mysql" // MySQL驱动
-	_ "github.com/lib/pq"              // PostgreSQL驱动
-	_ "github.com/mattn/go-sqlite3"    // SQLite驱动
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-// Database 数据库连接管理器
+// Database 数据库管理器
 type Database struct {
-	DB      *sql.DB
-	config  *configs.DatabaseConfig
-	logger  *utils.Logger
-	driver  string
-	dialect Dialect
+	DB *gorm.DB
 }
 
-// NewDatabase 创建新的数据库连接
-func NewDatabase(config *configs.DatabaseConfig, logger *utils.Logger) (*Database, error) {
-	// 设置默认值
-	if config.Type == "" {
-		config.Type = "mysql" // 默认使用MySQL
-	}
-	if config.MaxOpenConns == 0 {
-		config.MaxOpenConns = 100
-	}
-	if config.MaxIdleConns == 0 {
-		config.MaxIdleConns = 10
-	}
-	if config.ConnMaxLifetime == 0 {
-		config.ConnMaxLifetime = time.Duration(3600) * time.Second
+// NewDatabase 创建数据库连接
+func NewDatabase(config *configs.DatabaseConfig) (*Database, error) {
+	var db *gorm.DB
+	var err error
+
+	// 配置GORM日志
+	gormConfig := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
 	}
 
-	var dsn string
-	var driver string
-
-	switch strings.ToLower(config.Type) {
+	// 根据数据库类型创建连接
+	switch config.Type {
 	case "mysql":
-		driver = "mysql"
-		dsn = buildMySQLDSN(config)
-	case "postgresql", "postgres":
-		driver = "postgres"
-		dsn = buildPostgreSQLDSN(config)
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			config.User, config.Password, config.Host, config.Port, config.Name)
+		db, err = gorm.Open(mysql.Open(dsn), gormConfig)
+		if err != nil {
+			return nil, fmt.Errorf("MySQL连接失败: %v", err)
+		}
+
+	case "postgres":
+		sslMode := "disable"
+		if config.SSLMode != "" {
+			sslMode = config.SSLMode
+		}
+		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=Asia/Shanghai",
+			config.Host, config.User, config.Password, config.Name, config.Port, sslMode)
+		db, err = gorm.Open(postgres.Open(dsn), gormConfig)
+		if err != nil {
+			return nil, fmt.Errorf("PostgreSQL连接失败: %v", err)
+		}
+
 	case "sqlite":
-		driver = "sqlite3"
-		dsn = buildSQLiteDSN(config)
+		db, err = gorm.Open(sqlite.Open(config.Name), gormConfig)
+		if err != nil {
+			return nil, fmt.Errorf("SQLite连接失败: %v", err)
+		}
+
 	default:
 		return nil, fmt.Errorf("不支持的数据库类型: %s", config.Type)
 	}
 
-	// 获取对应的方言
-	dialect, err := GetDialect(config.Type)
-	if err != nil {
-		return nil, fmt.Errorf("获取数据库方言失败: %v", err)
-	}
-
-	logger.Info("连接数据库: %s", config.Type)
-	logger.Debug("DSN: %s", dsn)
-
-	db, err := sql.Open(driver, dsn)
-	if err != nil {
-		return nil, fmt.Errorf("连接数据库失败: %v", err)
-	}
-
 	// 配置连接池
-	db.SetMaxOpenConns(config.MaxOpenConns)
-	db.SetMaxIdleConns(config.MaxIdleConns)
-	db.SetConnMaxLifetime(config.ConnMaxLifetime)
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("获取底层数据库连接失败: %v", err)
+	}
+
+	// 设置连接池参数（使用配置文件中的值）
+	if config.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(config.MaxOpenConns)
+	} else {
+		sqlDB.SetMaxOpenConns(100) // 默认值
+	}
+	if config.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(config.MaxIdleConns)
+	} else {
+		sqlDB.SetMaxIdleConns(10) // 默认值
+	}
+	if config.ConnMaxLifetime > 0 {
+		sqlDB.SetConnMaxLifetime(config.ConnMaxLifetime)
+	} else {
+		sqlDB.SetConnMaxLifetime(time.Hour) // 默认值
+	}
 
 	// 测试连接
-	if err := db.Ping(); err != nil {
+	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("数据库连接测试失败: %v", err)
 	}
 
-	database := &Database{
-		DB:      db,
-		config:  config,
-		logger:  logger,
-		driver:  driver,
-		dialect: dialect,
-	}
+	log.Printf("数据库连接成功: %s", config.Type)
 
-	logger.Info("数据库连接成功: %s", config.Type)
-	return database, nil
+	return &Database{DB: db}, nil
 }
 
-// buildMySQLDSN 构建MySQL连接字符串
-func buildMySQLDSN(config *configs.DatabaseConfig) string {
-	params := []string{}
+// AutoMigrate 自动迁移数据库表结构
+func (d *Database) AutoMigrate() error {
+	log.Println("开始自动迁移数据库表结构...")
 
-	if config.Charset != "" {
-		params = append(params, "charset="+config.Charset)
-	} else {
-		params = append(params, "charset=utf8mb4")
+	// 定义所有模型
+	models := []interface{}{
+		&User{},
+		&UserAuth{},
+		&Device{},
+		&DeviceAuth{},
+		&UserDevice{},
+		&AICapability{},
+		&UserCapability{},
+		&DeviceCapability{},
+		&GlobalConfig{},
+		&SystemConfig{},
+		&Session{},
+		&UsageStats{},
+		&ProviderConfig{},
 	}
 
-	if config.ParseTime {
-		params = append(params, "parseTime=true")
+	// 执行自动迁移
+	if err := d.DB.AutoMigrate(models...); err != nil {
+		return fmt.Errorf("数据库迁移失败: %v", err)
 	}
 
-	if config.Loc != "" {
-		params = append(params, "loc="+config.Loc)
-	} else {
-		params = append(params, "loc=Local")
-	}
-
-	paramStr := strings.Join(params, "&")
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s",
-		config.User,
-		config.Password,
-		config.Host,
-		config.Port,
-		config.Name,
-		paramStr,
-	)
-}
-
-// buildPostgreSQLDSN 构建PostgreSQL连接字符串
-func buildPostgreSQLDSN(config *configs.DatabaseConfig) string {
-	params := []string{}
-
-	if config.SSLMode != "" {
-		params = append(params, "sslmode="+config.SSLMode)
-	} else {
-		params = append(params, "sslmode=disable")
-	}
-
-	paramStr := strings.Join(params, " ")
-	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s %s",
-		config.Host,
-		config.Port,
-		config.User,
-		config.Password,
-		config.Name,
-		paramStr,
-	)
-}
-
-// buildSQLiteDSN 构建SQLite连接字符串
-func buildSQLiteDSN(config *configs.DatabaseConfig) string {
-	filePath := config.Name
-	if config.FilePath != "" {
-		filePath = config.FilePath
-	}
-	return filePath
+	log.Println("数据库表结构迁移完成")
+	return nil
 }
 
 // Close 关闭数据库连接
 func (d *Database) Close() error {
-	if d.DB != nil {
-		return d.DB.Close()
+	sqlDB, err := d.DB.DB()
+	if err != nil {
+		return err
 	}
-	return nil
+	return sqlDB.Close()
 }
 
-// GetDB 获取数据库连接
-func (d *Database) GetDB() *sql.DB {
+// GetDB 获取GORM数据库实例
+func (d *Database) GetDB() *gorm.DB {
 	return d.DB
 }
 
-// GetDriver 获取数据库驱动类型
-func (d *Database) GetDriver() string {
-	return d.driver
-}
-
-// GetDialect 获取数据库方言
-func (d *Database) GetDialect() Dialect {
-	return d.dialect
+// Transaction 执行数据库事务
+func (d *Database) Transaction(fc func(tx *gorm.DB) error) error {
+	return d.DB.Transaction(fc)
 }
 
 // Begin 开始事务
-func (d *Database) Begin() (*sql.Tx, error) {
+func (d *Database) Begin() *gorm.DB {
 	return d.DB.Begin()
 }
 
-// Exec 执行SQL语句
-func (d *Database) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return d.DB.Exec(query, args...)
+// Commit 提交事务
+func (d *Database) Commit() *gorm.DB {
+	return d.DB.Commit()
 }
 
-// Query 查询SQL语句
-func (d *Database) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	return d.DB.Query(query, args...)
-}
-
-// QueryRow 查询单行
-func (d *Database) QueryRow(query string, args ...interface{}) *sql.Row {
-	return d.DB.QueryRow(query, args...)
-}
-
-// Prepare 预处理SQL语句
-func (d *Database) Prepare(query string) (*sql.Stmt, error) {
-	return d.DB.Prepare(query)
-}
-
-// Ping 测试连接
-func (d *Database) Ping() error {
-	return d.DB.Ping()
-}
-
-// Stats 获取连接池统计信息
-func (d *Database) Stats() sql.DBStats {
-	return d.DB.Stats()
+// Rollback 回滚事务
+func (d *Database) Rollback() *gorm.DB {
+	return d.DB.Rollback()
 }

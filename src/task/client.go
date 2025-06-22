@@ -62,21 +62,23 @@ func (cm *ClientManager) RemoveClient(clientID string) {
 }
 
 // NewResourceQuota creates a new resource quota instance
-// TODO: Add configuration for max tasks
-//
-// TODO	不同级别的用户可以设置不同的配额
-func NewResourceQuota() *ResourceQuota {
+// 支持外部传入配额参数
+func NewResourceQuotaWithLevel(level UserLevel, maxTotal, maxConcurrent int) *ResourceQuota {
 	now := time.Now()
 	quota := &ResourceQuota{
-		MaxTotalTasks:      100, // Default daily total limit
-		MaxConcurrentTasks: 10,  // Default concurrent limit
+		MaxTotalTasks:      maxTotal,
+		MaxConcurrentTasks: maxConcurrent,
 		TotalUsedQuota:     0,
 		TotalRunningTasks:  0,
-		UserLevel:          UserLevelBasic,
+		UserLevel:          level,
 		LastResetDate:      time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()),
 	}
-
 	return quota
+}
+
+// 兼容原有默认实现
+func NewResourceQuota() *ResourceQuota {
+	return NewResourceQuotaWithLevel(UserLevelBasic, 100, 10)
 }
 
 // 设置用户配额的方法

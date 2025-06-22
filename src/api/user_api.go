@@ -44,26 +44,28 @@ func NewUserAPI(
 }
 
 // RegisterRoutes 注册路由
-func (userApi *UserAPI) RegisterRoutes(r *gin.Engine) {
+func (userApi *UserAPI) RegisterRoutes(r gin.IRouter) {
 	// 认证相关路由
-	auth := r.Group("/api/auth")
+	auth := r.Group("/auth")
 	{
 		auth.POST("/login", userApi.authMiddleware.Login)
 		auth.POST("/logout", userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.Logout)
 		auth.GET("/me", userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.GetCurrentUser)
+		auth.POST("/register", userApi.CreateUser)
 	}
 
 	// 用户管理路由
-	users := r.Group("/api/users")
+	users := r.Group("/users")
 	users.Use(userApi.authMiddleware.AuthRequired())
 	{
 		// 用户CRUD
-		users.GET("", userApi.ListUsers)
+		users.GET("", userApi.authMiddleware.AdminRequired(), userApi.ListUsers)
 		users.POST("", userApi.authMiddleware.AdminRequired(), userApi.CreateUser)
 		users.GET("/:id", userApi.GetUser)
 		users.PUT("/:id", userApi.UpdateUser)
 		users.DELETE("/:id", userApi.authMiddleware.AdminRequired(), userApi.DeleteUser)
 		users.PUT("/:id/password", userApi.UpdatePassword)
+		users.POST("/:id/reset-password", userApi.authMiddleware.AdminRequired(), userApi.ResetPassword)
 
 		// 用户设备管理
 		users.GET("/:id/devices", userApi.GetUserDevices)
@@ -77,13 +79,13 @@ func (userApi *UserAPI) RegisterRoutes(r *gin.Engine) {
 	}
 
 	// 设备管理路由
-	devices := r.Group("/api/devices")
-	devices.Use(userApi.authMiddleware.AuthRequired())
+	devices := r.Group("/devices")
+	devices.Use(userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.AdminRequired())
 	{
 		devices.GET("", userApi.ListDevices)
 		devices.POST("", userApi.CreateDevice)
 		devices.GET("/:id", userApi.GetDevice)
-		devices.GET("/oui/:oui/sn/:sn", userApi.GetDeviceByOUISN)
+		devices.GET("/oui/:oui/sn/:sn", userApi.GetDeviceByOUIAndSN)
 		devices.PUT("/:id", userApi.UpdateDevice)
 		devices.DELETE("/:id", userApi.DeleteDevice)
 
@@ -97,23 +99,23 @@ func (userApi *UserAPI) RegisterRoutes(r *gin.Engine) {
 	}
 
 	// AI能力管理路由
-	capabilities := r.Group("/api/capabilities")
-	capabilities.Use(userApi.authMiddleware.AuthRequired())
+	capabilities := r.Group("/capabilities")
+	capabilities.Use(userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.AdminRequired())
 	{
 		capabilities.GET("", userApi.ListCapabilities)
 		capabilities.GET("/:name/:type", userApi.GetCapability)
-		capabilities.POST("", userApi.authMiddleware.AdminRequired(), userApi.CreateCapability)
-		capabilities.PUT("/:name/:type", userApi.authMiddleware.AdminRequired(), userApi.UpdateCapability)
-		capabilities.DELETE("/:name/:type", userApi.authMiddleware.AdminRequired(), userApi.DeleteCapability)
+		capabilities.POST("", userApi.CreateCapability)
+		capabilities.PUT("/:name/:type", userApi.UpdateCapability)
+		capabilities.DELETE("/:name/:type", userApi.DeleteCapability)
 
 		// 默认能力类型管理
 		capabilities.GET("/defaults", userApi.GetDefaultCapabilities)
-		capabilities.POST("/defaults", userApi.authMiddleware.AdminRequired(), userApi.SetDefaultCapability)
-		capabilities.DELETE("/defaults/:capabilityName", userApi.authMiddleware.AdminRequired(), userApi.RemoveDefaultCapability)
+		capabilities.POST("/defaults", userApi.SetDefaultCapability)
+		capabilities.DELETE("/defaults/:capabilityName", userApi.RemoveDefaultCapability)
 	}
 
 	// 系统配置管理路由（仅管理员）
-	systemConfigs := r.Group("/api/system-configs")
+	systemConfigs := r.Group("/system-configs")
 	systemConfigs.Use(userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.AdminRequired())
 	{
 		systemConfigs.GET("", userApi.GetSystemConfigs)
@@ -139,10 +141,10 @@ func (userApi *UserAPI) RegisterRoutes(r *gin.Engine) {
 	}
 
 	// 用户统计路由
-	stats := r.Group("/api/stats")
+	stats := r.Group("/stats")
 	stats.Use(userApi.authMiddleware.AuthRequired())
 	{
-		stats.GET("/user", userApi.GetUserStats)
+		stats.GET("/users", userApi.GetUserStats)
 	}
 }
 
@@ -238,7 +240,7 @@ func (userApi *UserAPI) GetUser(c *gin.Context) {
 		return
 	}
 
-	user, err := userApi.userService.GetUserByID(userID)
+	user, err := userApi.userService.GetUserByID(uint(userID))
 	if err != nil {
 		userApi.logger.Error("获取用户信息失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -278,7 +280,7 @@ func (userApi *UserAPI) UpdateUser(c *gin.Context) {
 	}
 
 	// 获取用户信息
-	user, err := userApi.userService.GetUserByID(userID)
+	user, err := userApi.userService.GetUserByID(uint(userID))
 	if err != nil {
 		userApi.logger.Error("获取用户信息失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -360,7 +362,7 @@ func (userApi *UserAPI) UpdatePassword(c *gin.Context) {
 	}
 
 	currentUserObj := currentUser.(*database.User)
-	if currentUserObj.ID != userID && currentUserObj.Role != "admin" {
+	if currentUserObj.ID != uint(userID) && currentUserObj.Role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": "权限不足",
 		})
@@ -369,7 +371,7 @@ func (userApi *UserAPI) UpdatePassword(c *gin.Context) {
 
 	// 如果不是管理员，需要验证旧密码
 	if currentUserObj.Role != "admin" {
-		user, err := userApi.userService.GetUserByID(userID)
+		user, err := userApi.userService.GetUserByID(uint(userID))
 		if err != nil {
 			userApi.logger.Error("获取用户信息失败: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -389,7 +391,7 @@ func (userApi *UserAPI) UpdatePassword(c *gin.Context) {
 	}
 
 	// 更新密码
-	err = userApi.userService.UpdatePassword(userID, req.NewPassword)
+	err = userApi.userService.UpdatePassword(uint(userID), req.NewPassword)
 	if err != nil {
 		userApi.logger.Error("更新密码失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -413,7 +415,7 @@ func (userApi *UserAPI) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	err = userApi.userService.DeleteUser(userID)
+	err = userApi.userService.DeleteUser(uint(userID))
 	if err != nil {
 		userApi.logger.Error("删除用户失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -427,6 +429,34 @@ func (userApi *UserAPI) DeleteUser(c *gin.Context) {
 	})
 }
 
+// ResetPassword 重置用户密码（仅管理员）
+func (userApi *UserAPI) ResetPassword(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的用户ID"})
+		return
+	}
+
+	// 生成随机密码
+	newPassword := utils.GenerateRandomPassword(12)
+
+	// 更新密码
+	err = userApi.userService.ResetPassword(int(id), newPassword)
+	if err != nil {
+		userApi.logger.Error("重置密码失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "重置密码失败"})
+		return
+	}
+
+	userApi.logger.Info("用户 %d 的密码已重置", id)
+	// 在实际应用中，您可能希望通过安全的方式将新密码告知用户
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "密码重置成功",
+		"newPassword": newPassword, // 仅为方便调试，生产环境不应返回
+	})
+}
+
 // GetUserDevices 获取用户设备列表
 func (userApi *UserAPI) GetUserDevices(c *gin.Context) {
 	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -437,7 +467,7 @@ func (userApi *UserAPI) GetUserDevices(c *gin.Context) {
 		return
 	}
 
-	devices, err := userApi.userService.GetUserDevices(userID)
+	devices, err := userApi.userService.GetUserDevices(uint(userID))
 	if err != nil {
 		userApi.logger.Error("获取用户设备失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -463,7 +493,7 @@ func (userApi *UserAPI) BindUserDevice(c *gin.Context) {
 		return
 	}
 
-	err := userApi.userService.BindUserDevice(userID, req.DeviceUUID, req.DeviceAlias, req.IsOwner, req.Permissions)
+	err := userApi.userService.BindUserDevice(uint(userID), req.DeviceUUID, req.DeviceAlias, req.IsOwner, req.Permissions)
 	if err != nil {
 		userApi.logger.Error("绑定用户设备失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -482,7 +512,7 @@ func (userApi *UserAPI) UnbindUserDevice(c *gin.Context) {
 	userID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 	deviceUUID := c.Param("deviceUUID")
 
-	err := userApi.userService.UnbindUserDevice(userID, deviceUUID)
+	err := userApi.userService.UnbindUserDevice(uint(userID), deviceUUID)
 	if err != nil {
 		userApi.logger.Error("解绑用户设备失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -506,7 +536,7 @@ func (userApi *UserAPI) GetUserCapabilities(c *gin.Context) {
 		return
 	}
 
-	capabilities, err := userApi.userService.GetUserCapabilities(userID)
+	capabilities, err := userApi.userService.GetUserCapabilities(uint(userID))
 	if err != nil {
 		userApi.logger.Error("获取用户AI能力失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -538,7 +568,7 @@ func (userApi *UserAPI) SetUserCapability(c *gin.Context) {
 		return
 	}
 
-	err = userApi.userService.SetUserCapability(userID, req.CapabilityName, req.CapabilityType, req.Config)
+	err = userApi.userService.SetUserCapability(uint(userID), req.CapabilityName, req.CapabilityType, req.Config)
 	if err != nil {
 		userApi.logger.Error("设置用户AI能力失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -583,8 +613,9 @@ func (userApi *UserAPI) RemoveUserCapability(c *gin.Context) {
 	}
 
 	// 禁用用户AI能力
-	query := `UPDATE user_capabilities SET is_active = false WHERE user_id = ? AND capability_id = ?`
-	_, err = userApi.userService.GetDB().Exec(query, userID, capability.ID)
+	err = userApi.userService.GetDB().DB.Model(&database.UserCapability{}).
+		Where("user_id = ? AND capability_id = ?", uint(userID), capability.ID).
+		Update("is_active", false).Error
 	if err != nil {
 		userApi.logger.Error("移除用户AI能力失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -639,7 +670,7 @@ func (userApi *UserAPI) CreateDevice(c *gin.Context) {
 	}
 
 	// 检查OUI和SN组合是否已存在
-	existingDeviceByOUISN, err := userApi.deviceService.GetDeviceByOUISN(req.OUI, req.SN)
+	existingDeviceByOUISN, err := userApi.deviceService.GetDeviceByOUIAndSN(req.OUI, req.SN)
 	if err != nil {
 		userApi.logger.Error("检查OUI和SN失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -707,12 +738,12 @@ func (userApi *UserAPI) GetDevice(c *gin.Context) {
 	})
 }
 
-// GetDeviceByOUISN 根据OUI和SN获取设备信息
-func (userApi *UserAPI) GetDeviceByOUISN(c *gin.Context) {
+// GetDeviceByOUIAndSN 根据OUI和SN获取设备信息
+func (userApi *UserAPI) GetDeviceByOUIAndSN(c *gin.Context) {
 	oui := c.Param("oui")
 	sn := c.Param("sn")
 
-	device, err := userApi.deviceService.GetDeviceByOUISN(oui, sn)
+	device, err := userApi.deviceService.GetDeviceByOUIAndSN(oui, sn)
 	if err != nil {
 		userApi.logger.Error("获取设备信息失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -854,7 +885,7 @@ func (userApi *UserAPI) GetDeviceCapabilities(c *gin.Context) {
 	}
 
 	// 获取设备能力配置
-	capabilities, err := userApi.configService.GetDeviceCapabilities(device.ID)
+	capabilities, err := userApi.deviceService.GetDeviceCapabilities(device.ID)
 	if err != nil {
 		userApi.logger.Error("获取设备AI能力失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -898,7 +929,7 @@ func (userApi *UserAPI) SetDeviceCapability(c *gin.Context) {
 	}
 
 	// 获取能力ID
-	capability, err := userApi.configService.GetAICapabilityByName(req.CapabilityName, req.CapabilityType)
+	capability, err := userApi.configService.GetAICapability(req.CapabilityName, req.CapabilityType)
 	if err != nil {
 		userApi.logger.Error("获取AI能力信息失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -914,7 +945,8 @@ func (userApi *UserAPI) SetDeviceCapability(c *gin.Context) {
 		return
 	}
 
-	err = userApi.configService.SetDeviceCapability(device.ID, capability.ID, req.Priority, req.Config, req.IsEnabled)
+	// 设置设备AI能力
+	err = userApi.deviceService.SetDeviceCapability(device.ID, req.CapabilityName, req.CapabilityType, req.Priority, req.Config, req.IsEnabled)
 	if err != nil {
 		userApi.logger.Error("设置设备AI能力失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -952,7 +984,7 @@ func (userApi *UserAPI) RemoveDeviceCapability(c *gin.Context) {
 	}
 
 	// 获取能力ID
-	capability, err := userApi.configService.GetAICapabilityByName(capabilityName, capabilityType)
+	capability, err := userApi.configService.GetAICapability(capabilityName, capabilityType)
 	if err != nil {
 		userApi.logger.Error("获取AI能力信息失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -968,7 +1000,8 @@ func (userApi *UserAPI) RemoveDeviceCapability(c *gin.Context) {
 		return
 	}
 
-	err = userApi.configService.RemoveDeviceCapability(device.ID, capability.ID)
+	// 移除设备AI能力
+	err = userApi.deviceService.SetDeviceCapability(device.ID, capability.CapabilityName, capability.CapabilityType, 0, nil, false)
 	if err != nil {
 		userApi.logger.Error("移除设备AI能力失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -983,75 +1016,43 @@ func (userApi *UserAPI) RemoveDeviceCapability(c *gin.Context) {
 }
 
 // GetDeviceCapabilitiesWithFallback 获取设备AI能力配置（带回退逻辑）
-// 优先级：设备专属配置 > 用户自定义配置 > 系统默认配置
 func (userApi *UserAPI) GetDeviceCapabilitiesWithFallback(c *gin.Context) {
-	deviceUUID := c.Param("id")
-
-	// 获取当前用户ID（从认证中间件中获取）
+	deviceIDStr := c.Param("deviceID")
 	user, exists := c.Get("user")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "用户未认证",
-		})
-		return
+	var userID *uint
+	if exists {
+		u := user.(*database.User)
+		userID = &u.ID
 	}
-	userObj := user.(*database.User)
-	userID := &userObj.ID
-
-	// 获取设备能力配置（带回退逻辑）
-	config, err := userApi.configService.GetDeviceCapabilityConfigWithFallback(deviceUUID, userID)
+	// 设备ID转uint
+	deviceID, err := strconv.ParseUint(deviceIDStr, 10, 32)
 	if err != nil {
-		userApi.logger.Error("获取设备能力配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取设备能力配置失败: " + err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "设备ID格式错误"})
 		return
 	}
-
-	// 构建响应数据，包含优先级信息
-	type CapabilityWithPriority struct {
-		database.CapabilityConfig
-		PrioritySource string `json:"priority_source"` // "device", "user", "system"
-	}
-
-	capabilitiesWithPriority := make([]CapabilityWithPriority, 0)
-	for _, cap := range config.Capabilities {
-		prioritySource := "device"
-		if cap.Priority == 100 {
-			prioritySource = "user"
-		} else if cap.Priority == 200 {
-			prioritySource = "system"
+	// 权限检查（如有用户）
+	if userID != nil && !userApi.isAdmin(c) {
+		// 检查是否绑定
+		ud, err := userApi.deviceService.GetUserDeviceBinding(*userID, uint(deviceID))
+		if err != nil || ud == nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权限访问此设备"})
+			return
 		}
-
-		capWithPriority := CapabilityWithPriority{
-			CapabilityConfig: cap,
-			PrioritySource:   prioritySource,
-		}
-		capabilitiesWithPriority = append(capabilitiesWithPriority, capWithPriority)
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data": gin.H{
-			"device_id":      config.DeviceID,
-			"capabilities":   capabilitiesWithPriority,
-			"global_configs": config.GlobalConfigs,
-		},
-	})
+	// 获取能力配置
+	config, err := userApi.configService.GetDeviceCapabilityConfigWithFallback(uint(deviceID), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取设备能力配置失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": config})
 }
 
 // ListCapabilities 获取AI能力列表
 func (userApi *UserAPI) ListCapabilities(c *gin.Context) {
 	capabilityType := c.Query("type")
-	var enabled *bool
-	if enabledStr := c.Query("enabled"); enabledStr != "" {
-		if enabledStr == "true" {
-			enabled = &[]bool{true}[0]
-		} else if enabledStr == "false" {
-			enabled = &[]bool{false}[0]
-		}
-	}
 
-	capabilities, err := userApi.configService.ListAICapabilities(capabilityType, enabled)
+	capabilities, err := userApi.configService.ListAICapabilities(capabilityType)
 	if err != nil {
 		userApi.logger.Error("获取AI能力列表失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -1201,7 +1202,23 @@ func (userApi *UserAPI) DeleteCapability(c *gin.Context) {
 	capabilityName := c.Param("name")
 	capabilityType := c.Param("type")
 
-	err := userApi.configService.DeleteAICapability(capabilityName, capabilityType)
+	// 先获取capability的ID
+	capability, err := userApi.configService.GetAICapability(capabilityName, capabilityType)
+	if err != nil {
+		userApi.logger.Error("获取AI能力信息失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取AI能力信息失败",
+		})
+		return
+	}
+	if capability == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "AI能力不存在",
+		})
+		return
+	}
+
+	err = userApi.configService.DeleteAICapability(capability.ID)
 	if err != nil {
 		userApi.logger.Error("删除AI能力失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -1217,60 +1234,55 @@ func (userApi *UserAPI) DeleteCapability(c *gin.Context) {
 
 // GetDefaultCapabilities 获取默认AI能力列表
 func (userApi *UserAPI) GetDefaultCapabilities(c *gin.Context) {
-	capabilities, err := userApi.configService.ListDefaultAICapabilities()
+	caps, err := userApi.configService.ListAICapabilities("")
 	if err != nil {
-		userApi.logger.Error("获取默认AI能力列表失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取默认AI能力列表失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取AI能力列表失败: " + err.Error()})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data": capabilities,
-	})
+	var result []database.AICapability
+	for _, cap := range caps {
+		if cap.IsGlobal && cap.IsActive {
+			result = append(result, *cap)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
-// SetDefaultCapability 设置默认AI能力
+// SetDefaultCapability 设置系统默认AI能力
 func (userApi *UserAPI) SetDefaultCapability(c *gin.Context) {
 	var req database.DefaultAICapabilityRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
 		return
 	}
-
-	err := userApi.configService.SetDefaultAICapability(req.CapabilityName, req.CapabilityType)
-	if err != nil {
-		userApi.logger.Error("设置默认AI能力失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "设置默认AI能力失败: " + err.Error(),
-		})
+	cap, err := userApi.configService.GetAICapability(req.CapabilityName, req.CapabilityType)
+	if err != nil || cap == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "AI能力不存在"})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "默认AI能力设置成功",
-	})
+	cap.IsGlobal = true
+	cap.IsActive = true
+	if err := userApi.configService.UpdateAICapability(cap); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "设置默认AI能力失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "设置成功"})
 }
 
-// RemoveDefaultCapability 移除默认AI能力
+// RemoveDefaultCapability 移除系统默认AI能力
 func (userApi *UserAPI) RemoveDefaultCapability(c *gin.Context) {
 	capabilityName := c.Param("capabilityName")
-
-	err := userApi.configService.RemoveDefaultAICapability(capabilityName)
-	if err != nil {
-		userApi.logger.Error("移除默认AI能力失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "移除默认AI能力失败: " + err.Error(),
-		})
+	cap, err := userApi.configService.GetAICapability(capabilityName, "")
+	if err != nil || cap == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "AI能力不存在"})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "默认AI能力移除成功",
-	})
+	cap.IsGlobal = false
+	if err := userApi.configService.UpdateAICapability(cap); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "移除默认AI能力失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "移除成功"})
 }
 
 // GetUserStats 获取用户统计信息
@@ -1281,7 +1293,7 @@ func (api *UserAPI) GetUserStats(c *gin.Context) {
 		return
 	}
 
-	stats, err := api.userService.GetUserStats(userID)
+	stats, err := api.userService.GetUserStats(uint(userID))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取用户统计失败: %v", err)})
 		return
@@ -1304,16 +1316,8 @@ func (api *UserAPI) GetSystemConfigs(c *gin.Context) {
 	}
 
 	category := c.Query("category")
-	isDefaultStr := c.Query("is_default")
-
-	var isDefault *bool
-	if isDefaultStr != "" {
-		if val, err := strconv.ParseBool(isDefaultStr); err == nil {
-			isDefault = &val
-		}
-	}
-
-	configs, err := api.configService.ListSystemConfigs(category, isDefault)
+	// TODO: 实现带isDefault参数的ListSystemConfigs
+	configs, err := api.configService.ListSystemConfigs(category)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取系统配置失败: %v", err)})
 		return
@@ -1375,16 +1379,9 @@ func (api *UserAPI) SetSystemConfig(c *gin.Context) {
 		return
 	}
 
-	userID := api.getUserIDFromContext(c)
-	err := api.configService.SetSystemConfig(req.Category, req.Key, req.Value, req.ConfigType, req.Description, req.IsDefault, &userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("设置系统配置失败: %v", err)})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "系统配置设置成功",
+	// TODO: 实现SetSystemConfig
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error": "功能暂未实现",
 	})
 }
 
@@ -1473,177 +1470,128 @@ func (api *UserAPI) isAdmin(c *gin.Context) bool {
 	return false
 }
 
-// ListProviderConfigs 获取提供者配置列表
+// ListProviderConfigs 获取提供商配置列表
 func (userApi *UserAPI) ListProviderConfigs(c *gin.Context) {
 	category := c.Query("category")
-
-	var configs []database.ProviderConfig
-	var err error
-
-	if category != "" {
-		configs, err = userApi.configService.ListProviderConfigs(category)
-	} else {
-		// 获取所有类别的配置
-		allConfigs := make([]database.ProviderConfig, 0)
-		categories := []string{"ASR", "TTS", "LLM", "VLLLM"}
-		for _, cat := range categories {
-			catConfigs, _ := userApi.configService.ListProviderConfigs(cat)
-			allConfigs = append(allConfigs, catConfigs...)
-		}
-		configs = allConfigs
-	}
-
+	configs, err := userApi.configService.ListProviderConfigs(category)
 	if err != nil {
-		userApi.logger.Error("获取提供者配置列表失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取提供者配置列表失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取提供商配置失败: " + err.Error()})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data":  configs,
-		"total": len(configs),
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": configs})
 }
 
-// GetProviderConfig 获取单个提供者配置
+// GetProviderConfig 获取单个提供商配置
 func (userApi *UserAPI) GetProviderConfig(c *gin.Context) {
-	category := c.Param("category")
-	name := c.Param("name")
-
-	config, err := userApi.configService.GetProviderConfig(category, name)
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		userApi.logger.Error("获取提供者配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取提供者配置失败",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID格式错误"})
 		return
 	}
-
-	if config == nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "提供者配置不存在",
-		})
+	config, err := userApi.configService.GetProviderConfig(uint(id))
+	if err != nil || config == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "提供商配置不存在"})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"data": config,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": config})
 }
 
-// CreateProviderConfig 创建提供者配置
+// CreateProviderConfig 创建提供商配置
 func (userApi *UserAPI) CreateProviderConfig(c *gin.Context) {
-	var config database.ProviderConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误: " + err.Error(),
-		})
-		return
-	}
-	category := c.Query("category")
-	if category == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "类别参数为必需"})
-		return
-	}
-	if config.Name == "" || config.Type == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "名称和类型为必需字段"})
-		return
-	}
-	existing, _ := userApi.configService.GetProviderConfig(category, config.Name)
-	if existing != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "提供者配置已存在"})
-		return
-	}
-	err := userApi.configService.SetProviderConfig(category, config.Name, &config)
-	if err != nil {
-		userApi.logger.Error("创建提供者配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建提供者配置失败"})
-		return
-	}
-	if userApi.poolManager != nil {
-		_ = userApi.poolManager.ReloadProviderConfig(category, config.Name)
-	}
-	c.JSON(http.StatusCreated, gin.H{"message": "提供者配置创建成功", "data": config})
-}
-
-// UpdateProviderConfig 更新提供者配置
-func (userApi *UserAPI) UpdateProviderConfig(c *gin.Context) {
-	category := c.Param("category")
-	name := c.Param("name")
-	var config database.ProviderConfig
-	if err := c.ShouldBindJSON(&config); err != nil {
+	var req database.ProviderConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
 		return
 	}
-	existing, err := userApi.configService.GetProviderConfig(category, name)
-	if err != nil {
-		userApi.logger.Error("检查提供者配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "检查提供者配置失败"})
+	if err := userApi.configService.CreateProviderConfig(&req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败: " + err.Error()})
 		return
 	}
-	if existing == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "提供者配置不存在"})
-		return
-	}
-	config.Name = name
-	err = userApi.configService.SetProviderConfig(category, name, &config)
-	if err != nil {
-		userApi.logger.Error("更新提供者配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新提供者配置失败"})
-		return
-	}
-	if userApi.poolManager != nil {
-		_ = userApi.poolManager.ReloadProviderConfig(category, name)
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "提供者配置更新成功", "data": config})
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": req})
 }
 
-// DeleteProviderConfig 删除提供者配置
+// UpdateProviderConfig 更新提供商配置
+func (userApi *UserAPI) UpdateProviderConfig(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID格式错误"})
+		return
+	}
+	var req database.ProviderConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+	req.ID = uint(id)
+	if err := userApi.configService.UpdateProviderConfig(&req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": req})
+}
+
+// DeleteProviderConfig 删除提供商配置
 func (userApi *UserAPI) DeleteProviderConfig(c *gin.Context) {
-	category := c.Param("category")
-	name := c.Param("name")
-	existing, err := userApi.configService.GetProviderConfig(category, name)
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		userApi.logger.Error("检查提供者配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "检查提供者配置失败"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID格式错误"})
 		return
 	}
-	if existing == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "提供者配置不存在"})
+	if err := userApi.configService.DeleteProviderConfig(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
 		return
 	}
-	err = userApi.configService.DeleteProviderConfig(category, name)
-	if err != nil {
-		userApi.logger.Error("删除提供者配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除提供者配置失败"})
-		return
-	}
-	if userApi.poolManager != nil {
-		_ = userApi.poolManager.ReloadProviderConfig(category, name)
-	}
-	c.JSON(http.StatusOK, gin.H{"message": "提供者配置删除成功"})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "删除成功"})
 }
 
-// ListProviderVersions 获取provider的所有版本
+// ListProviderVersions 获取提供商版本列表
 func (userApi *UserAPI) ListProviderVersions(c *gin.Context) {
-	category := c.Param("category")
-	name := c.Param("name")
-
-	versions, err := userApi.configService.ListProviderVersions(category, name)
+	category := c.Query("category")
+	name := c.Query("name")
+	versions, err := userApi.configService.GetProviderVersions(category, name)
 	if err != nil {
-		userApi.logger.Error("获取provider版本列表失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取provider版本列表失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取版本失败: " + err.Error()})
 		return
 	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": versions})
+}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data":  versions,
-		"total": len(versions),
+// SetDefaultProviderVersion 设置默认提供商版本
+func (userApi *UserAPI) SetDefaultProviderVersion(c *gin.Context) {
+	var req struct {
+		Category string `json:"category" binding:"required"`
+		Name     string `json:"name" binding:"required"`
+		Version  string `json:"version" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
+		return
+	}
+	// 先将所有同类置为非默认
+	err := userApi.configService.UpdateProviderConfig(&database.ProviderConfig{
+		Category:  req.Category,
+		Name:      req.Name,
+		IsDefault: false,
 	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "重置默认失败: " + err.Error()})
+		return
+	}
+	// 再将目标版本置为默认
+	err = userApi.configService.UpdateProviderConfig(&database.ProviderConfig{
+		Category:  req.Category,
+		Name:      req.Name,
+		Version:   req.Version,
+		IsDefault: true,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "设置默认失败: " + err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "设置成功"})
 }
 
 // GetGrayscaleStatus 获取灰度发布状态
@@ -1652,32 +1600,24 @@ func (userApi *UserAPI) GetGrayscaleStatus(c *gin.Context) {
 	name := c.Param("name")
 
 	if userApi.poolManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "灰度发布管理器未初始化",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "灰度发布管理器未初始化"})
 		return
 	}
 
 	grayscaleManager := userApi.poolManager.GetGrayscaleManager()
 	if grayscaleManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "灰度发布管理器未初始化",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "灰度发布管理器未初始化"})
 		return
 	}
 
 	status, err := grayscaleManager.GetGrayscaleStatus(category, name)
 	if err != nil {
 		userApi.logger.Error("获取灰度发布状态失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "获取灰度发布状态失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取灰度发布状态失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data": status,
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": status})
 }
 
 // UpdateProviderWeight 更新provider版本权重
@@ -1691,109 +1631,53 @@ func (userApi *UserAPI) UpdateProviderWeight(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误: " + err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误: " + err.Error()})
 		return
 	}
 
 	if userApi.poolManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "灰度发布管理器未初始化",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "灰度发布管理器未初始化"})
 		return
 	}
 
 	grayscaleManager := userApi.poolManager.GetGrayscaleManager()
 	if grayscaleManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "灰度发布管理器未初始化",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "灰度发布管理器未初始化"})
 		return
 	}
 
 	err := grayscaleManager.UpdateWeight(category, name, req.Version, req.Weight)
 	if err != nil {
 		userApi.logger.Error("更新provider权重失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "更新provider权重失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新provider权重失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "provider权重更新成功",
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "provider权重更新成功"})
 }
 
-// SetDefaultProviderVersion 设置默认provider版本
-func (userApi *UserAPI) SetDefaultProviderVersion(c *gin.Context) {
-	category := c.Param("category")
-	name := c.Param("name")
-
-	var req struct {
-		Version string `json:"version" binding:"required"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "请求参数错误: " + err.Error(),
-		})
-		return
-	}
-
-	err := userApi.configService.SetDefaultProviderVersion(category, name, req.Version)
-	if err != nil {
-		userApi.logger.Error("设置默认provider版本失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "设置默认provider版本失败",
-		})
-		return
-	}
-
-	// 刷新灰度配置缓存
-	if userApi.poolManager != nil {
-		grayscaleManager := userApi.poolManager.GetGrayscaleManager()
-		if grayscaleManager != nil {
-			_ = grayscaleManager.RefreshConfig(category, name)
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message": "默认provider版本设置成功",
-	})
-}
-
-// RefreshGrayscaleConfig 刷新灰度配置缓存
+// RefreshGrayscaleConfig 刷新灰度配置
 func (userApi *UserAPI) RefreshGrayscaleConfig(c *gin.Context) {
 	category := c.Param("category")
 	name := c.Param("name")
 
 	if userApi.poolManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "灰度发布管理器未初始化",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "灰度发布管理器未初始化"})
 		return
 	}
 
 	grayscaleManager := userApi.poolManager.GetGrayscaleManager()
 	if grayscaleManager == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "灰度发布管理器未初始化",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "灰度发布管理器未初始化"})
 		return
 	}
 
 	err := grayscaleManager.RefreshConfig(category, name)
 	if err != nil {
 		userApi.logger.Error("刷新灰度配置失败: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "刷新灰度配置失败",
-		})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "刷新灰度配置失败"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "灰度配置刷新成功",
-	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "灰度配置刷新成功"})
 }

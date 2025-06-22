@@ -1,13 +1,13 @@
 package database
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"ai-server-go/src/core/utils"
+
+	"gorm.io/gorm"
 )
 
 // ConfigService 配置管理服务
@@ -24,50 +24,50 @@ func NewConfigService(db *Database, logger *utils.Logger) *ConfigService {
 	}
 }
 
+// GetDB 获取数据库连接
+func (s *ConfigService) GetDB() *Database {
+	return s.db
+}
+
 // GetGlobalConfig 获取全局配置
 func (s *ConfigService) GetGlobalConfig(key string) (*GlobalConfig, error) {
-	query := `SELECT * FROM global_configs WHERE config_key = ?`
-
 	var config GlobalConfig
-	err := s.db.QueryRow(query, key).Scan(
-		&config.ID,
-		&config.ConfigKey,
-		&config.ConfigValue,
-		&config.ConfigType,
-		&config.Description,
-		&config.IsSystem,
-		&config.CreatedAt,
-		&config.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.DB.Where("config_key = ?", key).First(&config).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("查询全局配置失败: %v", err)
 	}
-
 	return &config, nil
 }
 
 // SetGlobalConfig 设置全局配置
 func (s *ConfigService) SetGlobalConfig(key, value, configType, description string, isSystem bool) error {
-	query := `
-		INSERT INTO global_configs (config_key, config_value, config_type, description, is_system)
-		VALUES (?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE 
-		config_value = VALUES(config_value),
-		config_type = VALUES(config_type),
-		description = VALUES(description),
-		is_system = VALUES(is_system)
-	`
-
-	_, err := s.db.Exec(query, key, value, configType, description, isSystem)
-	if err != nil {
-		return fmt.Errorf("设置全局配置失败: %v", err)
+	var config GlobalConfig
+	if err := s.db.DB.Where("config_key = ?", key).First(&config).Error; err == nil {
+		// 更新现有配置
+		config.ConfigValue = value
+		config.ConfigType = configType
+		config.Description = description
+		config.IsSystem = isSystem
+		if err := s.db.DB.Save(&config).Error; err != nil {
+			return fmt.Errorf("更新全局配置失败: %v", err)
+		}
+	} else {
+		// 创建新配置
+		config = GlobalConfig{
+			ConfigKey:   key,
+			ConfigValue: value,
+			ConfigType:  configType,
+			Description: description,
+			IsSystem:    isSystem,
+		}
+		if err := s.db.DB.Create(&config).Error; err != nil {
+			return fmt.Errorf("创建全局配置失败: %v", err)
+		}
 	}
 
-	s.logger.Info("全局配置设置成功: %s = %s", key, value)
+	s.logger.Info("全局配置设置成功: %s", key)
 	return nil
 }
 
@@ -102,822 +102,303 @@ func (s *ConfigService) GetGlobalConfigBool(key string) (bool, error) {
 }
 
 // ListGlobalConfigs 获取全局配置列表
-func (s *ConfigService) ListGlobalConfigs(isSystem *bool) ([]*GlobalConfig, error) {
-	query := `SELECT * FROM global_configs`
-	args := []interface{}{}
-
-	if isSystem != nil {
-		query += ` WHERE is_system = ?`
-		args = append(args, *isSystem)
-	}
-
-	query += ` ORDER BY config_key`
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
+func (s *ConfigService) ListGlobalConfigs() ([]*GlobalConfig, error) {
+	var configs []*GlobalConfig
+	if err := s.db.DB.Find(&configs).Error; err != nil {
 		return nil, fmt.Errorf("查询全局配置列表失败: %v", err)
 	}
-	defer rows.Close()
-
-	var configs []*GlobalConfig
-	for rows.Next() {
-		var config GlobalConfig
-		err := rows.Scan(
-			&config.ID,
-			&config.ConfigKey,
-			&config.ConfigValue,
-			&config.ConfigType,
-			&config.Description,
-			&config.IsSystem,
-			&config.CreatedAt,
-			&config.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描全局配置数据失败: %v", err)
-		}
-		configs = append(configs, &config)
-	}
-
 	return configs, nil
 }
 
-// GetAICapability 获取AI能力配置
-func (s *ConfigService) GetAICapability(capabilityName, capabilityType string) (*AICapability, error) {
-	query := `SELECT * FROM ai_capabilities WHERE capability_name = ? AND capability_type = ?`
-
-	var capability AICapability
-	err := s.db.QueryRow(query, capabilityName, capabilityType).Scan(
-		&capability.ID,
-		&capability.CapabilityName,
-		&capability.CapabilityType,
-		&capability.DisplayName,
-		&capability.Description,
-		&capability.ConfigSchema,
-		&capability.IsGlobal,
-		&capability.IsActive,
-		&capability.CreatedAt,
-		&capability.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("查询AI能力配置失败: %v", err)
+// DeleteGlobalConfig 删除全局配置
+func (s *ConfigService) DeleteGlobalConfig(key string) error {
+	if err := s.db.DB.Where("config_key = ?", key).Delete(&GlobalConfig{}).Error; err != nil {
+		return fmt.Errorf("删除全局配置失败: %v", err)
 	}
 
+	s.logger.Info("全局配置删除成功: %s", key)
+	return nil
+}
+
+// GetAICapability 获取AI能力
+func (s *ConfigService) GetAICapability(name, capabilityType string) (*AICapability, error) {
+	var capability AICapability
+	if err := s.db.DB.Where("capability_name = ? AND capability_type = ?", name, capabilityType).First(&capability).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("查询AI能力失败: %v", err)
+	}
 	return &capability, nil
 }
 
-// ListAICapabilities 获取AI能力配置列表
-func (s *ConfigService) ListAICapabilities(capabilityType string, isActive *bool) ([]*AICapability, error) {
-	query := `SELECT * FROM ai_capabilities`
-	args := []interface{}{}
-
-	conditions := []string{}
-	if capabilityType != "" {
-		conditions = append(conditions, "capability_type = ?")
-		args = append(args, capabilityType)
-	}
-	if isActive != nil {
-		conditions = append(conditions, "is_active = ?")
-		args = append(args, *isActive)
-	}
-
-	if len(conditions) > 0 {
-		query += ` WHERE ` + conditions[0]
-		for i := 1; i < len(conditions); i++ {
-			query += ` AND ` + conditions[i]
-		}
-	}
-
-	query += ` ORDER BY capability_name, capability_type`
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("查询AI能力配置列表失败: %v", err)
-	}
-	defer rows.Close()
-
-	var capabilities []*AICapability
-	for rows.Next() {
-		var capability AICapability
-		err := rows.Scan(
-			&capability.ID,
-			&capability.CapabilityName,
-			&capability.CapabilityType,
-			&capability.DisplayName,
-			&capability.Description,
-			&capability.ConfigSchema,
-			&capability.IsGlobal,
-			&capability.IsActive,
-			&capability.CreatedAt,
-			&capability.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描AI能力配置数据失败: %v", err)
-		}
-		capabilities = append(capabilities, &capability)
-	}
-
-	return capabilities, nil
-}
-
-// CreateAICapability 创建AI能力配置
+// CreateAICapability 创建AI能力
 func (s *ConfigService) CreateAICapability(capability *AICapability) error {
-	query := `
-		INSERT INTO ai_capabilities (capability_name, capability_type, display_name, description, config_schema, is_global, is_active)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`
-
-	result, err := s.db.Exec(query,
-		capability.CapabilityName,
-		capability.CapabilityType,
-		capability.DisplayName,
-		capability.Description,
-		capability.ConfigSchema,
-		capability.IsGlobal,
-		capability.IsActive,
-	)
-
-	if err != nil {
-		return fmt.Errorf("创建AI能力配置失败: %v", err)
+	if err := s.db.DB.Create(capability).Error; err != nil {
+		return fmt.Errorf("创建AI能力失败: %v", err)
 	}
 
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("获取AI能力配置ID失败: %v", err)
-	}
-
-	capability.ID = id
-	s.logger.Info("AI能力配置创建成功: %s/%s (ID: %d)", capability.CapabilityName, capability.CapabilityType, id)
+	s.logger.Info("AI能力创建成功: %s/%s", capability.CapabilityName, capability.CapabilityType)
 	return nil
 }
 
-// UpdateAICapability 更新AI能力配置
+// UpdateAICapability 更新AI能力
 func (s *ConfigService) UpdateAICapability(capability *AICapability) error {
-	query := `
-		UPDATE ai_capabilities 
-		SET display_name = ?, description = ?, config_schema = ?, is_global = ?, is_active = ?
-		WHERE id = ?
-	`
-
-	_, err := s.db.Exec(query,
-		capability.DisplayName,
-		capability.Description,
-		capability.ConfigSchema,
-		capability.IsGlobal,
-		capability.IsActive,
-		capability.ID,
-	)
-
-	if err != nil {
-		return fmt.Errorf("更新AI能力配置失败: %v", err)
+	if err := s.db.DB.Save(capability).Error; err != nil {
+		return fmt.Errorf("更新AI能力失败: %v", err)
 	}
 
-	s.logger.Info("AI能力配置更新成功: %s/%s", capability.CapabilityName, capability.CapabilityType)
+	s.logger.Info("AI能力更新成功: %s/%s", capability.CapabilityName, capability.CapabilityType)
 	return nil
 }
 
-// SetDeviceCapability 设置设备AI能力配置
-func (s *ConfigService) SetDeviceCapability(deviceID int64, capabilityID int64, priority int, configData map[string]interface{}, isEnabled bool) error {
-	configJSON, err := json.Marshal(configData)
-	if err != nil {
-		return fmt.Errorf("序列化配置数据失败: %v", err)
-	}
-
-	query := `
-		INSERT INTO device_capabilities (device_id, capability_id, priority, config_data, is_enabled)
-		VALUES (?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE 
-		priority = VALUES(priority),
-		config_data = VALUES(config_data),
-		is_enabled = VALUES(is_enabled)
-	`
-
-	_, err = s.db.Exec(query, deviceID, capabilityID, priority, configJSON, isEnabled)
-	if err != nil {
-		return fmt.Errorf("设置设备AI能力配置失败: %v", err)
-	}
-
-	s.logger.Info("设备AI能力配置设置成功: DeviceID %d, CapabilityID %d", deviceID, capabilityID)
-	return nil
-}
-
-// GetDeviceCapabilityConfig 获取设备AI能力配置
-func (s *ConfigService) GetDeviceCapabilityConfig(deviceID string) (*DeviceCapabilityConfig, error) {
-	// 获取设备信息
-	deviceService := NewDeviceService(s.db, s.logger)
-	deviceWithCapabilities, err := deviceService.GetDeviceWithCapabilities(deviceID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 获取全局配置
-	globalConfigs, err := s.ListGlobalConfigs(nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// 构建配置
-	config := &DeviceCapabilityConfig{
-		DeviceID:      deviceWithCapabilities.Device.ID,
-		Capabilities:  make([]CapabilityConfig, 0),
-		GlobalConfigs: make(map[string]string),
-	}
-
-	// 处理设备AI能力配置
-	for _, dc := range deviceWithCapabilities.Capabilities {
-		var configData map[string]interface{}
-		if dc.ConfigData != nil {
-			if err := json.Unmarshal(dc.ConfigData, &configData); err != nil {
-				s.logger.Error("解析设备AI能力配置失败: %v", err)
-				continue
-			}
-		}
-
-		capabilityConfig := CapabilityConfig{
-			CapabilityName: dc.Capability.CapabilityName,
-			CapabilityType: dc.Capability.CapabilityType,
-			Config:         configData,
-			Priority:       dc.Priority,
-			IsEnabled:      dc.IsEnabled,
-		}
-		config.Capabilities = append(config.Capabilities, capabilityConfig)
-	}
-
-	// 处理全局配置
-	for _, gc := range globalConfigs {
-		config.GlobalConfigs[gc.ConfigKey] = gc.ConfigValue
-	}
-
-	return config, nil
-}
-
-// GetDefaultCapabilityType 获取默认能力类型
-func (s *ConfigService) GetDefaultCapabilityType(capabilityName string) (string, error) {
-	key := fmt.Sprintf("default.%s", capabilityName)
-	return s.GetGlobalConfigValue(key)
-}
-
-// GetDeviceCapabilityByType 根据类型获取设备AI能力配置
-func (s *ConfigService) GetDeviceCapabilityByType(deviceID int64, capabilityName string) (*DeviceCapability, error) {
-	query := `
-		SELECT dc.*, ac.capability_name, ac.capability_type, ac.display_name, ac.description, ac.config_schema
-		FROM device_capabilities dc
-		JOIN ai_capabilities ac ON dc.capability_id = ac.id
-		WHERE dc.device_id = ? AND ac.capability_name = ? AND dc.is_enabled = true
-		ORDER BY dc.priority ASC
-		LIMIT 1
-	`
-
-	var dc DeviceCapability
-	var ac AICapability
-	err := s.db.QueryRow(query, deviceID, capabilityName).Scan(
-		&dc.ID,
-		&dc.DeviceID,
-		&dc.CapabilityID,
-		&dc.Priority,
-		&dc.ConfigData,
-		&dc.IsEnabled,
-		&dc.CreatedAt,
-		&dc.UpdatedAt,
-		&ac.CapabilityName,
-		&ac.CapabilityType,
-		&ac.DisplayName,
-		&ac.Description,
-		&ac.ConfigSchema,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("查询设备AI能力配置失败: %v", err)
-	}
-
-	dc.Capability = &ac
-	return &dc, nil
-}
-
-// GetDeviceCapabilities 获取设备AI能力配置列表
-func (s *ConfigService) GetDeviceCapabilities(deviceID int64) ([]*DeviceCapability, error) {
-	query := `
-		SELECT dc.*, ac.capability_name, ac.capability_type, ac.display_name, ac.description, ac.config_schema
-		FROM device_capabilities dc
-		JOIN ai_capabilities ac ON dc.capability_id = ac.id
-		WHERE dc.device_id = ?
-		ORDER BY dc.priority ASC, ac.capability_name, ac.capability_type
-	`
-
-	rows, err := s.db.Query(query, deviceID)
-	if err != nil {
-		return nil, fmt.Errorf("查询设备AI能力配置失败: %v", err)
-	}
-	defer rows.Close()
-
-	var capabilities []*DeviceCapability
-	for rows.Next() {
-		var dc DeviceCapability
-		var ac AICapability
-		err := rows.Scan(
-			&dc.ID,
-			&dc.DeviceID,
-			&dc.CapabilityID,
-			&dc.Priority,
-			&dc.ConfigData,
-			&dc.IsEnabled,
-			&dc.CreatedAt,
-			&dc.UpdatedAt,
-			&ac.CapabilityName,
-			&ac.CapabilityType,
-			&ac.DisplayName,
-			&ac.Description,
-			&ac.ConfigSchema,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描设备AI能力配置数据失败: %v", err)
-		}
-		dc.Capability = &ac
-		capabilities = append(capabilities, &dc)
-	}
-
-	return capabilities, nil
-}
-
-// GetAICapabilityByName 根据名称和类型获取AI能力配置
-func (s *ConfigService) GetAICapabilityByName(capabilityName, capabilityType string) (*AICapability, error) {
-	return s.GetAICapability(capabilityName, capabilityType)
-}
-
-// RemoveDeviceCapability 移除设备AI能力配置
-func (s *ConfigService) RemoveDeviceCapability(deviceID int64, capabilityID int64) error {
-	query := `DELETE FROM device_capabilities WHERE device_id = ? AND capability_id = ?`
-
-	_, err := s.db.Exec(query, deviceID, capabilityID)
-	if err != nil {
-		return fmt.Errorf("移除设备AI能力配置失败: %v", err)
-	}
-
-	s.logger.Info("设备AI能力配置移除成功: DeviceID %d, CapabilityID %d", deviceID, capabilityID)
-	return nil
-}
-
-// GetDeviceCapabilityWithFallback 获取设备AI能力配置（带回退逻辑）
-// 优先级：设备专属配置 > 用户自定义配置 > 系统默认配置
-func (s *ConfigService) GetDeviceCapabilityWithFallback(deviceID int64, userID *int64, capabilityName string) (*DeviceCapability, error) {
-	// 1. 首先尝试获取设备专属配置
-	deviceCapability, err := s.GetDeviceCapabilityByType(deviceID, capabilityName)
-	if err != nil {
-		return nil, fmt.Errorf("查询设备专属能力配置失败: %v", err)
-	}
-	if deviceCapability != nil && deviceCapability.IsEnabled {
-		s.logger.Info("使用设备专属能力配置: DeviceID %d, Capability %s", deviceID, capabilityName)
-		return deviceCapability, nil
-	}
-
-	// 2. 如果设备没有配置，尝试获取用户自定义配置
-	if userID != nil {
-		userCapability, err := s.GetUserCapabilityByType(*userID, capabilityName)
-		if err != nil {
-			s.logger.Error("查询用户自定义能力配置失败: %v", err)
-		} else if userCapability != nil && userCapability.IsActive {
-			// 将用户配置转换为设备配置格式
-			deviceCap := &DeviceCapability{
-				DeviceID:     deviceID,
-				CapabilityID: userCapability.CapabilityID,
-				Priority:     100, // 用户配置优先级较低
-				ConfigData:   userCapability.ConfigData,
-				IsEnabled:    true,
-				Capability:   userCapability.Capability,
-			}
-			s.logger.Info("使用用户自定义能力配置: UserID %d, DeviceID %d, Capability %s", *userID, deviceID, capabilityName)
-			return deviceCap, nil
-		}
-	}
-
-	// 3. 最后尝试获取系统默认配置
-	defaultCapability, err := s.GetDefaultCapabilityByName(capabilityName)
-	if err != nil {
-		s.logger.Error("查询系统默认能力配置失败: %v", err)
-	} else if defaultCapability != nil && defaultCapability.IsActive {
-		// 将默认配置转换为设备配置格式
-		deviceCap := &DeviceCapability{
-			DeviceID:     deviceID,
-			CapabilityID: defaultCapability.ID,
-			Priority:     200, // 默认配置优先级最低
-			ConfigData:   nil, // 使用默认配置
-			IsEnabled:    true,
-			Capability:   defaultCapability,
-		}
-		s.logger.Info("使用系统默认能力配置: DeviceID %d, Capability %s", deviceID, capabilityName)
-		return deviceCap, nil
-	}
-
-	// 4. 所有配置都没有找到
-	s.logger.Warn("未找到任何能力配置: DeviceID %d, UserID %v, Capability %s", deviceID, userID, capabilityName)
-	return nil, nil
-}
-
-// GetUserCapabilityByType 根据类型获取用户AI能力配置
-func (s *ConfigService) GetUserCapabilityByType(userID int64, capabilityName string) (*UserCapability, error) {
-	query := `
-		SELECT uc.*, ac.capability_name, ac.capability_type, ac.display_name, ac.description, ac.config_schema
-		FROM user_capabilities uc
-		JOIN ai_capabilities ac ON uc.capability_id = ac.id
-		WHERE uc.user_id = ? AND ac.capability_name = ? AND uc.is_active = true
-		ORDER BY uc.created_at DESC
-		LIMIT 1
-	`
-
-	var uc UserCapability
-	var ac AICapability
-	err := s.db.QueryRow(query, userID, capabilityName).Scan(
-		&uc.ID,
-		&uc.UserID,
-		&uc.CapabilityID,
-		&uc.ConfigData,
-		&uc.IsActive,
-		&uc.CreatedAt,
-		&uc.UpdatedAt,
-		&ac.CapabilityName,
-		&ac.CapabilityType,
-		&ac.DisplayName,
-		&ac.Description,
-		&ac.ConfigSchema,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("查询用户AI能力配置失败: %v", err)
-	}
-
-	uc.Capability = &ac
-	return &uc, nil
-}
-
-// GetDefaultCapabilityByName 根据名称获取系统默认AI能力配置
-func (s *ConfigService) GetDefaultCapabilityByName(capabilityName string) (*AICapability, error) {
-	// 首先获取默认能力类型
-	defaultType, err := s.GetDefaultCapabilityType(capabilityName)
-	if err != nil {
-		return nil, fmt.Errorf("获取默认能力类型失败: %v", err)
-	}
-	if defaultType == "" {
-		return nil, nil
-	}
-
-	// 然后获取该类型的默认配置
-	query := `
-		SELECT * FROM ai_capabilities 
-		WHERE capability_name = ? AND capability_type = ? AND is_global = true AND is_active = true
-		ORDER BY created_at ASC
-		LIMIT 1
-	`
-
-	var capability AICapability
-	err = s.db.QueryRow(query, capabilityName, defaultType).Scan(
-		&capability.ID,
-		&capability.CapabilityName,
-		&capability.CapabilityType,
-		&capability.DisplayName,
-		&capability.Description,
-		&capability.ConfigSchema,
-		&capability.IsGlobal,
-		&capability.IsActive,
-		&capability.CreatedAt,
-		&capability.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("查询默认AI能力配置失败: %v", err)
-	}
-
-	return &capability, nil
-}
-
-// GetDeviceCapabilityConfigWithFallback 获取设备AI能力配置（带回退逻辑）
-func (s *ConfigService) GetDeviceCapabilityConfigWithFallback(deviceID string, userID *int64) (*DeviceCapabilityConfig, error) {
-	// 获取设备信息
-	deviceService := NewDeviceService(s.db, s.logger)
-	device, err := deviceService.GetDeviceByUUID(deviceID)
-	if err != nil {
-		return nil, err
-	}
-	if device == nil {
-		return nil, fmt.Errorf("设备不存在: %s", deviceID)
-	}
-
-	// 获取所有可用的AI能力类型
-	capabilities, err := s.ListAICapabilities("", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// 构建配置
-	config := &DeviceCapabilityConfig{
-		DeviceID:      device.ID,
-		Capabilities:  make([]CapabilityConfig, 0),
-		GlobalConfigs: make(map[string]string),
-	}
-
-	// 为每种能力类型获取配置（带回退逻辑）
-	for _, capability := range capabilities {
-		if !capability.IsActive {
-			continue
-		}
-
-		deviceCap, err := s.GetDeviceCapabilityWithFallback(device.ID, userID, capability.CapabilityName)
-		if err != nil {
-			s.logger.Error("获取设备能力配置失败: %v", err)
-			continue
-		}
-
-		if deviceCap != nil {
-			var configData map[string]interface{}
-			if deviceCap.ConfigData != nil {
-				if err := json.Unmarshal(deviceCap.ConfigData, &configData); err != nil {
-					s.logger.Error("解析设备能力配置失败: %v", err)
-					continue
-				}
-			}
-
-			capabilityConfig := CapabilityConfig{
-				CapabilityName: deviceCap.Capability.CapabilityName,
-				CapabilityType: deviceCap.Capability.CapabilityType,
-				Config:         configData,
-				Priority:       deviceCap.Priority,
-				IsEnabled:      deviceCap.IsEnabled,
-			}
-			config.Capabilities = append(config.Capabilities, capabilityConfig)
-		}
-	}
-
-	// 获取全局配置
-	globalConfigs, err := s.ListGlobalConfigs(nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// 处理全局配置
-	for _, gc := range globalConfigs {
-		config.GlobalConfigs[gc.ConfigKey] = gc.ConfigValue
-	}
-
-	return config, nil
-}
-
-// DeleteAICapability 删除AI能力配置
-func (s *ConfigService) DeleteAICapability(capabilityName, capabilityType string) error {
-	// 先获取AI能力
-	capability, err := s.GetAICapability(capabilityName, capabilityType)
-	if err != nil {
-		return fmt.Errorf("获取AI能力失败: %v", err)
-	}
-	if capability == nil {
-		return fmt.Errorf("AI能力不存在: %s/%s", capabilityName, capabilityType)
-	}
-
-	// 检查是否有关联的设备或用户配置
-	deviceCount, err := s.getCapabilityUsageCount(capability.ID, "device")
-	if err != nil {
-		return fmt.Errorf("检查设备使用情况失败: %v", err)
-	}
-
-	userCount, err := s.getCapabilityUsageCount(capability.ID, "user")
-	if err != nil {
-		return fmt.Errorf("检查用户使用情况失败: %v", err)
-	}
-
-	if deviceCount > 0 || userCount > 0 {
-		return fmt.Errorf("AI能力正在被使用，无法删除: 设备使用 %d, 用户使用 %d", deviceCount, userCount)
-	}
-
-	// 软删除：设置为非活跃状态
-	query := `UPDATE ai_capabilities SET is_active = false WHERE id = ?`
-	_, err = s.db.Exec(query, capability.ID)
-	if err != nil {
+// DeleteAICapability 删除AI能力
+func (s *ConfigService) DeleteAICapability(id uint) error {
+	if err := s.db.DB.Delete(&AICapability{}, id).Error; err != nil {
 		return fmt.Errorf("删除AI能力失败: %v", err)
 	}
 
-	s.logger.Info("AI能力删除成功: %s/%s", capabilityName, capabilityType)
+	s.logger.Info("AI能力删除成功: ID %d", id)
 	return nil
 }
 
-// getCapabilityUsageCount 获取能力使用次数
-func (s *ConfigService) getCapabilityUsageCount(capabilityID int64, usageType string) (int, error) {
-	var query string
-	switch usageType {
-	case "device":
-		query = `SELECT COUNT(*) FROM device_capabilities WHERE capability_id = ? AND is_enabled = true`
-	case "user":
-		query = `SELECT COUNT(*) FROM user_capabilities WHERE capability_id = ? AND is_active = true`
-	default:
-		return 0, fmt.Errorf("未知的使用类型: %s", usageType)
+// ListAICapabilities 获取AI能力列表
+func (s *ConfigService) ListAICapabilities(capabilityType string) ([]*AICapability, error) {
+	var capabilities []*AICapability
+	query := s.db.DB
+	if capabilityType != "" {
+		query = query.Where("capability_type = ?", capabilityType)
 	}
-
-	var count int
-	err := s.db.QueryRow(query, capabilityID).Scan(&count)
-	if err != nil {
-		return 0, err
+	if err := query.Find(&capabilities).Error; err != nil {
+		return nil, fmt.Errorf("查询AI能力列表失败: %v", err)
 	}
-	return count, nil
+	return capabilities, nil
 }
 
-// ListDefaultAICapabilities 获取默认AI能力列表
-func (s *ConfigService) ListDefaultAICapabilities() (map[string]string, error) {
-	query := `SELECT config_key, config_value FROM global_configs WHERE config_key LIKE 'default.%'`
-
-	rows, err := s.db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("查询默认AI能力失败: %v", err)
-	}
-	defer rows.Close()
-
-	defaults := make(map[string]string)
-	for rows.Next() {
-		var key, value string
-		err := rows.Scan(&key, &value)
-		if err != nil {
-			return nil, fmt.Errorf("扫描默认AI能力数据失败: %v", err)
+// GetProviderConfig 获取提供商配置
+func (s *ConfigService) GetProviderConfig(id uint) (*ProviderConfig, error) {
+	var config ProviderConfig
+	if err := s.db.DB.First(&config, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
 		}
-		// 去掉 "default." 前缀
-		capabilityName := strings.TrimPrefix(key, "default.")
-		defaults[capabilityName] = value
+		return nil, fmt.Errorf("查询提供商配置失败: %v", err)
 	}
-
-	return defaults, nil
+	return &config, nil
 }
 
-// SetDefaultAICapability 设置默认AI能力
-func (s *ConfigService) SetDefaultAICapability(capabilityName, capabilityType string) error {
-	// 验证AI能力是否存在
-	capability, err := s.GetAICapability(capabilityName, capabilityType)
-	if err != nil {
-		return fmt.Errorf("验证AI能力失败: %v", err)
-	}
-	if capability == nil {
-		return fmt.Errorf("AI能力不存在: %s/%s", capabilityName, capabilityType)
+// CreateProviderConfig 创建提供商配置
+func (s *ConfigService) CreateProviderConfig(config *ProviderConfig) error {
+	if err := s.db.DB.Create(config).Error; err != nil {
+		return fmt.Errorf("创建提供商配置失败: %v", err)
 	}
 
-	// 设置全局配置
-	configKey := fmt.Sprintf("default.%s", capabilityName)
-	configValue := capabilityType
-
-	query := `
-		INSERT INTO global_configs (config_key, config_value, config_type, description, is_system)
-		VALUES (?, ?, 'string', ?, true)
-		ON DUPLICATE KEY UPDATE 
-		config_value = VALUES(config_value),
-		description = VALUES(description)
-	`
-
-	description := fmt.Sprintf("默认%s能力类型", capabilityName)
-	_, err = s.db.Exec(query, configKey, configValue, description)
-	if err != nil {
-		return fmt.Errorf("设置默认AI能力失败: %v", err)
-	}
-
-	s.logger.Info("默认AI能力设置成功: %s -> %s", capabilityName, capabilityType)
+	s.logger.Info("提供商配置创建成功: %s/%s/%s", config.Category, config.Name, config.Version)
 	return nil
 }
 
-// RemoveDefaultAICapability 移除默认AI能力
-func (s *ConfigService) RemoveDefaultAICapability(capabilityName string) error {
-	query := `DELETE FROM global_configs WHERE config_key = ?`
-
-	_, err := s.db.Exec(query, "default_"+capabilityName)
-	if err != nil {
-		return fmt.Errorf("移除默认AI能力失败: %v", err)
+// UpdateProviderConfig 更新提供商配置
+func (s *ConfigService) UpdateProviderConfig(config *ProviderConfig) error {
+	if err := s.db.DB.Save(config).Error; err != nil {
+		return fmt.Errorf("更新提供商配置失败: %v", err)
 	}
 
-	s.logger.Info("默认AI能力移除成功: %s", capabilityName)
+	s.logger.Info("提供商配置更新成功: %s/%s/%s", config.Category, config.Name, config.Version)
 	return nil
 }
 
-// ==================== 系统配置管理 ====================
+// DeleteProviderConfig 删除提供商配置
+func (s *ConfigService) DeleteProviderConfig(id uint) error {
+	if err := s.db.DB.Delete(&ProviderConfig{}, id).Error; err != nil {
+		return fmt.Errorf("删除提供商配置失败: %v", err)
+	}
+
+	s.logger.Info("提供商配置删除成功: ID %d", id)
+	return nil
+}
+
+// ListProviderConfigs 获取提供商配置列表
+func (s *ConfigService) ListProviderConfigs(category string) ([]*ProviderConfig, error) {
+	var configs []*ProviderConfig
+	query := s.db.DB
+	if category != "" {
+		query = query.Where("category = ?", category)
+	}
+	if err := query.Order("category, name, version").Find(&configs).Error; err != nil {
+		return nil, fmt.Errorf("查询提供商配置列表失败: %v", err)
+	}
+	return configs, nil
+}
+
+// GetProviderConfigsByCategory 根据类别获取提供商配置
+func (s *ConfigService) GetProviderConfigsByCategory(category string) ([]*ProviderConfig, error) {
+	var configs []*ProviderConfig
+	if err := s.db.DB.Where("category = ? AND is_active = ?", category, true).
+		Order("weight DESC, is_default DESC, created_at ASC").
+		Find(&configs).Error; err != nil {
+		return nil, fmt.Errorf("查询提供商配置失败: %v", err)
+	}
+	return configs, nil
+}
+
+// GetDefaultProviderConfig 获取默认提供商配置
+func (s *ConfigService) GetDefaultProviderConfig(category string) (*ProviderConfig, error) {
+	var config ProviderConfig
+	if err := s.db.DB.Where("category = ? AND is_default = ? AND is_active = ?", category, true, true).
+		First(&config).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("查询默认提供商配置失败: %v", err)
+	}
+	return &config, nil
+}
+
+// GetProviderVersions 获取提供商版本列表
+func (s *ConfigService) GetProviderVersions(category, name string) ([]*ProviderVersion, error) {
+	var configs []*ProviderConfig
+	if err := s.db.DB.Where("category = ? AND name = ?", category, name).
+		Order("version").
+		Find(&configs).Error; err != nil {
+		return nil, fmt.Errorf("查询提供商版本失败: %v", err)
+	}
+
+	var versions []*ProviderVersion
+	for _, config := range configs {
+		version := &ProviderVersion{
+			Category:    config.Category,
+			Name:        config.Name,
+			Version:     config.Version,
+			Weight:      config.Weight,
+			IsActive:    config.IsActive,
+			IsDefault:   config.IsDefault,
+			HealthScore: config.HealthScore,
+			CreatedAt:   config.CreatedAt,
+			UpdatedAt:   config.UpdatedAt,
+		}
+		versions = append(versions, version)
+	}
+
+	return versions, nil
+}
+
+// GetDefaultProviderModules 获取默认提供商模块
+func (s *ConfigService) GetDefaultProviderModules() (map[string]string, error) {
+	var configs []*ProviderConfig
+	if err := s.db.DB.Where("is_default = ? AND is_active = ?", true, true).
+		Select("category, name").
+		Find(&configs).Error; err != nil {
+		return nil, fmt.Errorf("查询默认提供商模块失败: %v", err)
+	}
+
+	modules := make(map[string]string)
+	for _, config := range configs {
+		modules[config.Category] = config.Name
+	}
+
+	return modules, nil
+}
+
+// UpdateProviderHealthScore 更新提供商健康评分
+func (s *ConfigService) UpdateProviderHealthScore(id uint, healthScore float64) error {
+	if err := s.db.DB.Model(&ProviderConfig{}).Where("id = ?", id).Update("health_score", healthScore).Error; err != nil {
+		return fmt.Errorf("更新提供商健康评分失败: %v", err)
+	}
+	return nil
+}
+
+// GetProviderConfigByCategoryAndName 根据类别和名称获取提供商配置
+func (s *ConfigService) GetProviderConfigByCategoryAndName(category, name string) (*ProviderConfig, error) {
+	var config ProviderConfig
+	if err := s.db.DB.Where("category = ? AND name = ? AND is_active = ?", category, name, true).
+		First(&config).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("查询提供商配置失败: %v", err)
+	}
+	return &config, nil
+}
+
+// GetProviderConfigByCategoryAndType 根据类别和类型获取提供商配置
+func (s *ConfigService) GetProviderConfigByCategoryAndType(category, providerType string) (*ProviderConfig, error) {
+	var config ProviderConfig
+	if err := s.db.DB.Where("category = ? AND type = ? AND is_active = ?", category, providerType, true).
+		First(&config).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("查询提供商配置失败: %v", err)
+	}
+	return &config, nil
+}
 
 // GetSystemConfig 获取系统配置
 func (s *ConfigService) GetSystemConfig(category, key string) (*SystemConfig, error) {
-	query := `SELECT * FROM system_configs WHERE config_category = ? AND config_key = ?`
-
 	var config SystemConfig
-	err := s.db.QueryRow(query, category, key).Scan(
-		&config.ID,
-		&config.ConfigCategory,
-		&config.ConfigKey,
-		&config.ConfigValue,
-		&config.ConfigType,
-		&config.Description,
-		&config.IsDefault,
-		&config.CreatedBy,
-		&config.UpdatedBy,
-		&config.CreatedAt,
-		&config.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
+	if err := s.db.DB.Where("config_category = ? AND config_key = ?", category, key).First(&config).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("查询系统配置失败: %v", err)
 	}
-
 	return &config, nil
 }
 
 // SetSystemConfig 设置系统配置
-func (s *ConfigService) SetSystemConfig(category, key, value, configType, description string, isDefault bool, userID *int64) error {
-	query := `
-		INSERT INTO system_configs (config_category, config_key, config_value, config_type, description, is_default, created_by, updated_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE 
-		config_value = VALUES(config_value),
-		config_type = VALUES(config_type),
-		description = VALUES(description),
-		is_default = VALUES(is_default),
-		updated_by = VALUES(updated_by)
-	`
-
-	_, err := s.db.Exec(query, category, key, value, configType, description, isDefault, userID, userID)
-	if err != nil {
-		return fmt.Errorf("设置系统配置失败: %v", err)
+func (s *ConfigService) SetSystemConfig(category, key, value, configType, description string, isDefault bool, createdBy, updatedBy *uint) error {
+	var config SystemConfig
+	if err := s.db.DB.Where("config_category = ? AND config_key = ?", category, key).First(&config).Error; err == nil {
+		// 更新现有配置
+		config.ConfigValue = value
+		config.ConfigType = configType
+		config.Description = description
+		config.IsDefault = isDefault
+		config.UpdatedBy = updatedBy
+		if err := s.db.DB.Save(&config).Error; err != nil {
+			return fmt.Errorf("更新系统配置失败: %v", err)
+		}
+	} else {
+		// 创建新配置
+		config = SystemConfig{
+			ConfigCategory: category,
+			ConfigKey:      key,
+			ConfigValue:    value,
+			ConfigType:     configType,
+			Description:    description,
+			IsDefault:      isDefault,
+			CreatedBy:      createdBy,
+			UpdatedBy:      updatedBy,
+		}
+		if err := s.db.DB.Create(&config).Error; err != nil {
+			return fmt.Errorf("创建系统配置失败: %v", err)
+		}
 	}
 
-	s.logger.Info("系统配置设置成功: %s.%s = %s", category, key, value)
+	s.logger.Info("系统配置设置成功: %s/%s", category, key)
 	return nil
 }
 
 // ListSystemConfigs 获取系统配置列表
-func (s *ConfigService) ListSystemConfigs(category string, isDefault *bool) ([]*SystemConfig, error) {
-	query := `SELECT * FROM system_configs`
-	args := []interface{}{}
-
-	conditions := []string{}
+func (s *ConfigService) ListSystemConfigs(category string) ([]*SystemConfig, error) {
+	var configs []*SystemConfig
+	query := s.db.DB
 	if category != "" {
-		conditions = append(conditions, "config_category = ?")
-		args = append(args, category)
+		query = query.Where("config_category = ?", category)
 	}
-	if isDefault != nil {
-		conditions = append(conditions, "is_default = ?")
-		args = append(args, *isDefault)
-	}
-
-	if len(conditions) > 0 {
-		query += ` WHERE ` + conditions[0]
-		for i := 1; i < len(conditions); i++ {
-			query += ` AND ` + conditions[i]
-		}
-	}
-
-	query += ` ORDER BY config_category, config_key`
-
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
+	if err := query.Find(&configs).Error; err != nil {
 		return nil, fmt.Errorf("查询系统配置列表失败: %v", err)
 	}
-	defer rows.Close()
-
-	var configs []*SystemConfig
-	for rows.Next() {
-		var config SystemConfig
-		err := rows.Scan(
-			&config.ID,
-			&config.ConfigCategory,
-			&config.ConfigKey,
-			&config.ConfigValue,
-			&config.ConfigType,
-			&config.Description,
-			&config.IsDefault,
-			&config.CreatedBy,
-			&config.UpdatedBy,
-			&config.CreatedAt,
-			&config.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描系统配置数据失败: %v", err)
-		}
-		configs = append(configs, &config)
-	}
-
 	return configs, nil
 }
 
 // DeleteSystemConfig 删除系统配置
 func (s *ConfigService) DeleteSystemConfig(category, key string) error {
-	query := `DELETE FROM system_configs WHERE config_category = ? AND config_key = ?`
-
-	_, err := s.db.Exec(query, category, key)
-	if err != nil {
+	if err := s.db.DB.Where("config_category = ? AND config_key = ?", category, key).Delete(&SystemConfig{}).Error; err != nil {
 		return fmt.Errorf("删除系统配置失败: %v", err)
 	}
 
-	s.logger.Info("系统配置删除成功: %s.%s", category, key)
+	s.logger.Info("系统配置删除成功: %s/%s", category, key)
 	return nil
 }
 
@@ -928,7 +409,7 @@ func (s *ConfigService) GetSystemConfigValue(category, key string) (string, erro
 		return "", err
 	}
 	if config == nil {
-		return "", fmt.Errorf("系统配置不存在: %s.%s", category, key)
+		return "", fmt.Errorf("系统配置不存在: %s/%s", category, key)
 	}
 	return config.ConfigValue, nil
 }
@@ -1032,7 +513,7 @@ func (s *ConfigService) InitializeDefaultSystemConfigs() error {
 
 		// 如果不存在，则创建默认配置
 		if existing == nil {
-			err = s.SetSystemConfig(config.category, config.key, config.value, config.configType, config.description, true, nil)
+			err = s.SetSystemConfig(config.category, config.key, config.value, config.configType, config.description, true, nil, nil)
 			if err != nil {
 				return fmt.Errorf("初始化系统配置失败: %v", err)
 			}
@@ -1043,9 +524,136 @@ func (s *ConfigService) InitializeDefaultSystemConfigs() error {
 	return nil
 }
 
+// InitializeDefaultProviderConfigs 初始化默认的provider配置
+func (s *ConfigService) InitializeDefaultProviderConfigs() error {
+	mustMarshal := func(v interface{}) json.RawMessage {
+		if v == nil {
+			return nil
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			s.logger.Error("JSON序列化失败 in InitializeDefaultProviderConfigs", err)
+			panic(err) // 在初始化阶段，序列化失败是严重错误，直接panic
+		}
+		if string(b) == "{}" || string(b) == "null" {
+			return nil
+		}
+		return b
+	}
+
+	defaultProviders := []ProviderConfig{
+		// ASR Providers
+		{ // DoubaoASR (Default)
+			Category: "ASR", Name: "DoubaoASR", Type: "doubao", Version: "v1.0",
+			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
+			AppID: "你的appid", Token: "你的access_token", OutputDir: "tmp/",
+			Extra: mustMarshal(map[string]interface{}{"description": "豆包ASR服务"}),
+		},
+		{ // GoSherpaASR
+			Category: "ASR", Name: "GoSherpaASR", Type: "gosherpa", Version: "v1.0",
+			IsDefault: false, IsActive: true, Weight: 50, HealthScore: 100,
+			BaseURL: "ws://127.0.0.1:8848/asr", // Mapped from 'addr'
+			Extra:   mustMarshal(map[string]interface{}{"description": "GoSherpa ASR服务"}),
+		},
+
+		// TTS Providers
+		{ // EdgeTTS (Default)
+			Category: "TTS", Name: "EdgeTTS", Type: "edge", Version: "v1.0",
+			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
+			Voice: "zh-CN-XiaoxiaoNeural", OutputDir: "tmp/",
+			Extra: mustMarshal(map[string]interface{}{"description": "微软Edge TTS服务，免费使用"}),
+		},
+		{ // DoubaoTTS
+			Category: "TTS", Name: "DoubaoTTS", Type: "doubao", Version: "v1.0",
+			IsDefault: false, IsActive: true, Weight: 80, HealthScore: 100,
+			Voice: "zh_female_wanwanxiaohe_moon_bigtts", OutputDir: "tmp/",
+			AppID: "你的appid", Token: "你的access_token", Cluster: "你的cluster",
+			Extra: mustMarshal(map[string]interface{}{"description": "豆包TTS服务"}),
+		},
+		{ // GoSherpaTTS
+			Category: "TTS", Name: "GoSherpaTTS", Type: "gosherpa", Version: "v1.0",
+			IsDefault: false, IsActive: true, Weight: 50, HealthScore: 100,
+			BaseURL:   "ws://127.0.0.1:8848/tts", // Mapped from 'cluster'
+			OutputDir: "tmp/",
+			Extra:     mustMarshal(map[string]interface{}{"description": "GoSherpa TTS服务"}),
+		},
+
+		// LLM Providers
+		{ // OllamaLLM (Default)
+			Category: "LLM", Name: "OllamaLLM", Type: "ollama", Version: "v1.0",
+			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
+			ModelName: "qwen3", BaseURL: "http://localhost:11434",
+			Extra: mustMarshal(map[string]interface{}{"description": "Ollama LLM服务,需预先下载模型"}),
+		},
+		{ // ChatGLMLLM
+			Category: "LLM", Name: "ChatGLMLLM", Type: "openai", Version: "v1.0",
+			IsDefault: false, IsActive: true, Weight: 80, HealthScore: 100,
+			ModelName: "glm-4-flash", BaseURL: "https://open.bigmodel.cn/api/paas/v4/",
+			APIKey: "你的api_key",
+			Extra:  mustMarshal(map[string]interface{}{"description": "智谱AI ChatGLM LLM服务"}),
+		},
+
+		// VLLLM Providers
+		{ // ChatGLMVLLM (Default)
+			Category: "VLLLM", Name: "ChatGLMVLLM", Type: "openai", Version: "v1.0",
+			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
+			ModelName: "glm-4v-flash", BaseURL: "https://open.bigmodel.cn/api/paas/v4/",
+			APIKey: "你的api_key", MaxTokens: 4096, Temperature: 0.7, TopP: 0.9,
+			Security: mustMarshal(map[string]interface{}{
+				"max_file_size":      10485760,
+				"max_pixels":         16777216,
+				"max_width":          4096,
+				"max_height":         4096,
+				"allowed_formats":    []string{"jpeg", "jpg", "png", "webp", "gif"},
+				"enable_deep_scan":   true,
+				"validation_timeout": "10s",
+			}),
+			Extra: mustMarshal(map[string]interface{}{"description": "智谱AI ChatGLM VLLLM服务"}),
+		},
+		{ // OllamaVLLM
+			Category: "VLLLM", Name: "OllamaVLLM", Type: "ollama", Version: "v1.0",
+			IsDefault: false, IsActive: true, Weight: 80, HealthScore: 100,
+			ModelName: "qwen2.5vl", BaseURL: "http://localhost:11434",
+			MaxTokens: 4096, Temperature: 0.7, TopP: 0.9,
+			Security: mustMarshal(map[string]interface{}{
+				"max_file_size":      10485760,
+				"max_pixels":         16777216,
+				"max_width":          4096,
+				"max_height":         4096,
+				"allowed_formats":    []string{"jpeg", "jpg", "png", "webp", "gif"},
+				"enable_deep_scan":   true,
+				"validation_timeout": "10s",
+			}),
+			Extra: mustMarshal(map[string]interface{}{"description": "Ollama VLLLM服务"}),
+		},
+	}
+
+	for _, provider := range defaultProviders {
+		// 检查是否已存在
+		var existing ProviderConfig
+		err := s.db.DB.Where("category = ? AND name = ? AND version = ?",
+			provider.Category, provider.Name, provider.Version).First(&existing).Error
+
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return fmt.Errorf("检查provider配置失败: %v", err)
+		}
+
+		// 如果不存在，则创建默认配置
+		if err == gorm.ErrRecordNotFound {
+			newProvider := provider
+			if err := s.CreateProviderConfig(&newProvider); err != nil {
+				return fmt.Errorf("初始化provider配置 '%s/%s' 失败: %v", provider.Category, provider.Name, err)
+			}
+		}
+	}
+
+	s.logger.Info("默认provider配置初始化完成")
+	return nil
+}
+
 // GetSystemConfigCategory 获取指定分类的所有系统配置
 func (s *ConfigService) GetSystemConfigCategory(category string) (map[string]interface{}, error) {
-	configs, err := s.ListSystemConfigs(category, nil)
+	configs, err := s.ListSystemConfigs(category)
 	if err != nil {
 		return nil, err
 	}
@@ -1093,219 +701,135 @@ func (s *ConfigService) GetSystemConfigCategory(category string) (map[string]int
 	return result, nil
 }
 
-// ==================== Provider配置管理 ====================
-
-// SetProviderConfig 设置/更新AI Provider配置
-func (s *ConfigService) SetProviderConfig(category, name string, config *ProviderConfig) error {
-	valueBytes, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	query := `REPLACE INTO system_configs (config_category, config_key, config_value, config_type, description, is_default, created_by, updated_by) VALUES (?, ?, ?, 'json', ?, 0, 'system', 'system')`
-	_, err = s.db.Exec(query, category, name, string(valueBytes), "AI Provider配置")
-	return err
-}
-
-// GetProviderConfig 获取AI Provider配置
-func (s *ConfigService) GetProviderConfig(category, name string) (*ProviderConfig, error) {
-	query := `SELECT config_value FROM system_configs WHERE config_category = ? AND config_key = ?`
-	row := s.db.QueryRow(query, category, name)
-	var value string
-	if err := row.Scan(&value); err != nil {
-		return nil, err
-	}
-	var config ProviderConfig
-	if err := json.Unmarshal([]byte(value), &config); err != nil {
-		return nil, err
-	}
-	return &config, nil
-}
-
-// ListProviderConfigs 列出某类所有Provider配置
-func (s *ConfigService) ListProviderConfigs(category string) ([]ProviderConfig, error) {
-	query := `SELECT config_value FROM system_configs WHERE config_category = ?`
-	rows, err := s.db.Query(query, category)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var configs []ProviderConfig
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			return nil, err
-		}
-		var config ProviderConfig
-		if err := json.Unmarshal([]byte(value), &config); err != nil {
-			return nil, err
-		}
-		configs = append(configs, config)
-	}
-	return configs, nil
-}
-
-// DeleteProviderConfig 删除Provider配置
-func (s *ConfigService) DeleteProviderConfig(category, name string) error {
-	query := `DELETE FROM system_configs WHERE config_category = ? AND config_key = ?`
-	_, err := s.db.Exec(query, category, name)
-	return err
-}
-
-// GetProviderConfigWithVersion 获取指定版本的provider配置
-func (s *ConfigService) GetProviderConfigWithVersion(category, name, version string) (*ProviderConfig, error) {
-	query := `
-		SELECT * FROM provider_configs 
-		WHERE category = ? AND name = ? AND version = ? AND is_active = true
-	`
-
-	var config ProviderConfig
-	err := s.db.QueryRow(query, category, name, version).Scan(
-		&config.ID, &config.Category, &config.Name, &config.Version, &config.Weight,
-		&config.IsActive, &config.IsDefault, &config.Type, &config.ModelName,
-		&config.BaseURL, &config.APIKey, &config.Voice, &config.Format,
-		&config.OutputDir, &config.AppID, &config.Token, &config.Cluster,
-		&config.Temperature, &config.MaxTokens, &config.TopP, &config.Security,
-		&config.Extra, &config.HealthScore, &config.CreatedAt, &config.UpdatedAt,
-	)
-
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("查询provider配置失败: %v", err)
-	}
-
-	return &config, nil
-}
-
-// ListProviderVersions 获取指定provider的所有版本
-func (s *ConfigService) ListProviderVersions(category, name string) ([]*ProviderVersion, error) {
-	query := `
-		SELECT category, name, version, weight, is_active, is_default, 
-		       health_score, created_at, updated_at
-		FROM provider_configs 
-		WHERE category = ? AND name = ?
-		ORDER BY version ASC, created_at DESC
-	`
-
-	rows, err := s.db.Query(query, category, name)
-	if err != nil {
-		return nil, fmt.Errorf("查询provider版本列表失败: %v", err)
-	}
-	defer rows.Close()
-
-	var versions []*ProviderVersion
-	for rows.Next() {
-		var version ProviderVersion
-		err := rows.Scan(
-			&version.Category, &version.Name, &version.Version, &version.Weight,
-			&version.IsActive, &version.IsDefault, &version.HealthScore,
-			&version.CreatedAt, &version.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描provider版本数据失败: %v", err)
-		}
-		versions = append(versions, &version)
-	}
-
-	return versions, nil
-}
-
-// GetActiveProviderConfigs 获取指定provider的所有活跃配置（用于灰度发布）
+// GetActiveProviderConfigs 获取指定category和name下所有激活的ProviderConfig
 func (s *ConfigService) GetActiveProviderConfigs(category, name string) ([]*ProviderConfig, error) {
-	query := `
-		SELECT * FROM provider_configs 
-		WHERE category = ? AND name = ? AND is_active = true
-		ORDER BY weight DESC, version ASC
-	`
-
-	rows, err := s.db.Query(query, category, name)
-	if err != nil {
-		return nil, fmt.Errorf("查询活跃provider配置失败: %v", err)
-	}
-	defer rows.Close()
-
 	var configs []*ProviderConfig
-	for rows.Next() {
-		var config ProviderConfig
-		err := rows.Scan(
-			&config.ID, &config.Category, &config.Name, &config.Version, &config.Weight,
-			&config.IsActive, &config.IsDefault, &config.Type, &config.ModelName,
-			&config.BaseURL, &config.APIKey, &config.Voice, &config.Format,
-			&config.OutputDir, &config.AppID, &config.Token, &config.Cluster,
-			&config.Temperature, &config.MaxTokens, &config.TopP, &config.Security,
-			&config.Extra, &config.HealthScore, &config.CreatedAt, &config.UpdatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("扫描provider配置数据失败: %v", err)
-		}
-		configs = append(configs, &config)
+	if err := s.db.DB.Where("category = ? AND name = ? AND is_active = ?", category, name, true).
+		Order("weight DESC, is_default DESC, created_at ASC").
+		Find(&configs).Error; err != nil {
+		return nil, fmt.Errorf("查询激活Provider配置失败: %v", err)
 	}
-
 	return configs, nil
 }
 
-// UpdateProviderWeight 更新provider版本的流量权重
+// UpdateProviderWeight 更新指定Provider的权重
 func (s *ConfigService) UpdateProviderWeight(category, name, version string, weight int) error {
-	query := `UPDATE provider_configs SET weight = ?, updated_at = CURRENT_TIMESTAMP WHERE category = ? AND name = ? AND version = ?`
-
-	_, err := s.db.Exec(query, weight, category, name, version)
-	if err != nil {
-		return fmt.Errorf("更新provider权重失败: %v", err)
+	if err := s.db.DB.Model(&ProviderConfig{}).
+		Where("category = ? AND name = ? AND version = ?", category, name, version).
+		Update("weight", weight).Error; err != nil {
+		return fmt.Errorf("更新Provider权重失败: %v", err)
 	}
-
-	s.logger.Info("Provider权重更新成功: %s/%s/%s -> %d", category, name, version, weight)
 	return nil
 }
 
-// UpdateProviderHealthScore 更新provider版本的健康评分
-func (s *ConfigService) UpdateProviderHealthScore(category, name, version string, healthScore float64) error {
-	query := `UPDATE provider_configs SET health_score = ?, updated_at = CURRENT_TIMESTAMP WHERE category = ? AND name = ? AND version = ?`
-
-	_, err := s.db.Exec(query, healthScore, category, name, version)
-	if err != nil {
-		return fmt.Errorf("更新provider健康评分失败: %v", err)
+// UpdateProviderHealthScoreByKey 根据category, name, version更新健康分
+func (s *ConfigService) UpdateProviderHealthScoreByKey(category, name, version string, healthScore float64) error {
+	if err := s.db.DB.Model(&ProviderConfig{}).
+		Where("category = ? AND name = ? AND version = ?", category, name, version).
+		Update("health_score", healthScore).Error; err != nil {
+		return fmt.Errorf("更新Provider健康分失败: %v", err)
 	}
-
-	s.logger.Info("Provider健康评分更新成功: %s/%s/%s -> %.2f", category, name, version, healthScore)
 	return nil
 }
 
-// SetDefaultProviderVersion 设置默认provider版本
-func (s *ConfigService) SetDefaultProviderVersion(category, name, version string) error {
-	// 先取消所有版本的默认状态
-	query1 := `UPDATE provider_configs SET is_default = FALSE WHERE category = ? AND name = ?`
-	_, err := s.db.Exec(query1, category, name)
-	if err != nil {
-		return fmt.Errorf("取消默认版本失败: %v", err)
-	}
+// GetDeviceCapabilityConfigWithFallback 获取设备AI能力配置（带回退逻辑）
+// userID 可为 nil
+func (s *ConfigService) GetDeviceCapabilityConfigWithFallback(deviceID uint, userID *uint) (*DeviceCapabilityConfig, error) {
+	var result DeviceCapabilityConfig
+	result.DeviceID = deviceID
+	result.Capabilities = []CapabilityConfig{}
+	result.GlobalConfigs = map[string]string{}
 
-	// 设置指定版本为默认
-	query2 := `UPDATE provider_configs SET is_default = TRUE WHERE category = ? AND name = ? AND version = ?`
-	_, err = s.db.Exec(query2, category, name, version)
-	if err != nil {
-		return fmt.Errorf("设置默认版本失败: %v", err)
-	}
-
-	s.logger.Info("默认provider版本设置成功: %s/%s/%s", category, name, version)
-	return nil
-}
-
-// GetDefaultProviderModules 返回所有类别的默认provider name
-func (s *ConfigService) GetDefaultProviderModules() (map[string]string, error) {
-	query := `SELECT category, name FROM provider_configs WHERE is_default = true AND is_active = true`
-	rows, err := s.db.Query(query)
+	// 1. 设备专属能力
+	var deviceCaps []DeviceCapability
+	err := s.db.DB.Where("device_id = ? AND is_enabled = ?", deviceID, true).Preload("Capability").Order("priority DESC").Find(&deviceCaps).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make(map[string]string)
-	for rows.Next() {
-		var category, name string
-		if err := rows.Scan(&category, &name); err != nil {
+	used := map[string]bool{}
+	for _, dc := range deviceCaps {
+		if dc.Capability.ID == 0 || !dc.IsEnabled {
+			continue
+		}
+		var config map[string]interface{}
+		_ = json.Unmarshal(dc.ConfigData, &config)
+		cc := CapabilityConfig{
+			CapabilityName: dc.Capability.CapabilityName,
+			CapabilityType: dc.Capability.CapabilityType,
+			Config:         config,
+			Priority:       dc.Priority,
+			IsEnabled:      dc.IsEnabled,
+		}
+		// 标记优先级来源
+		if cc.Config == nil {
+			cc.Config = map[string]interface{}{}
+		}
+		cc.Config["priority_source"] = "device"
+		result.Capabilities = append(result.Capabilities, cc)
+		used[cc.CapabilityName+"/"+cc.CapabilityType] = true
+	}
+
+	// 2. 用户自定义能力
+	if userID != nil {
+		var userCaps []UserCapability
+		err = s.db.DB.Where("user_id = ? AND is_active = ?", *userID, true).Preload("Capability").Find(&userCaps).Error
+		if err != nil {
 			return nil, err
 		}
-		result[category] = name
+		for _, uc := range userCaps {
+			if uc.Capability.ID == 0 {
+				continue
+			}
+			key := uc.Capability.CapabilityName + "/" + uc.Capability.CapabilityType
+			if used[key] {
+				continue
+			}
+			var config map[string]interface{}
+			_ = json.Unmarshal(uc.ConfigData, &config)
+			cc := CapabilityConfig{
+				CapabilityName: uc.Capability.CapabilityName,
+				CapabilityType: uc.Capability.CapabilityType,
+				Config:         config,
+				Priority:       100, // user优先级
+				IsEnabled:      true,
+			}
+			if cc.Config == nil {
+				cc.Config = map[string]interface{}{}
+			}
+			cc.Config["priority_source"] = "user"
+			result.Capabilities = append(result.Capabilities, cc)
+			used[key] = true
+		}
 	}
-	return result, nil
+
+	// 3. 系统默认能力
+	var sysCaps []AICapability
+	err = s.db.DB.Where("is_global = ? AND is_active = ?", true, true).Find(&sysCaps).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, sc := range sysCaps {
+		key := sc.CapabilityName + "/" + sc.CapabilityType
+		if used[key] {
+			continue
+		}
+		cc := CapabilityConfig{
+			CapabilityName: sc.CapabilityName,
+			CapabilityType: sc.CapabilityType,
+			Config:         map[string]interface{}{},
+			Priority:       200, // system优先级
+			IsEnabled:      true,
+		}
+		cc.Config["priority_source"] = "system"
+		result.Capabilities = append(result.Capabilities, cc)
+		used[key] = true
+	}
+
+	// 4. 全局配置
+	globalConfigs, _ := s.ListGlobalConfigs()
+	for _, gc := range globalConfigs {
+		result.GlobalConfigs[gc.ConfigKey] = gc.ConfigValue
+	}
+
+	return &result, nil
 }

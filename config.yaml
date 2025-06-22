@@ -15,7 +15,7 @@ server:
 
 # 数据库配置
 database:
-  # 数据库类型：mysql, postgresql, sqlite
+  # 数据库类型：mysql, postgres, sqlite
   type: mysql
   
   # MySQL配置
@@ -28,11 +28,8 @@ database:
   parse_time: true
   loc: Local
   
-  # PostgreSQL特定配置（当type为postgresql时使用）
+  # PostgreSQL特定配置（当type为postgres时使用）
   # ssl_mode: disable  # disable, require, verify-ca, verify-full
-  
-  # SQLite特定配置（当type为sqlite时使用）
-  # file_path: ./data/ai_server.db
   
   # 连接池配置
   max_open_conns: 100
@@ -85,7 +82,7 @@ log:
 #
 # PostgreSQL配置示例：
 # database:
-#   type: postgresql
+#   type: postgres
 #   host: localhost
 #   port: 5432
 #   user: postgres
@@ -100,7 +97,6 @@ log:
 # database:
 #   type: sqlite
 #   name: ./data/ai_server.db
-#   file_path: ./data/ai_server.db
 #   max_open_conns: 1
 #   max_idle_conns: 1
 #   conn_max_lifetime: 3600s

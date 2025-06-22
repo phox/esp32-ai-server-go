@@ -254,8 +254,8 @@ func (m *AuthMiddleware) Login(c *gin.Context) {
 		ExpiresAt: &expiresAt,
 	}
 
-	_, err = m.userService.CreateUserAuth(user.ID, &expiresAt)
-	if err != nil {
+	// 直接创建认证记录，使用生成的token
+	if err := m.userService.GetDB().DB.Create(userAuth).Error; err != nil {
 		m.logger.Error("创建用户认证失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "创建认证失败",
@@ -298,9 +298,7 @@ func (m *AuthMiddleware) Logout(c *gin.Context) {
 	auth := userAuth.(*database.UserAuth)
 
 	// 禁用Token
-	query := `UPDATE user_auth SET is_active = false WHERE id = ?`
-	_, err := m.userService.GetDB().Exec(query, auth.ID)
-	if err != nil {
+	if err := m.userService.GetDB().DB.Model(&database.UserAuth{}).Where("id = ?", auth.ID).Update("is_active", false).Error; err != nil {
 		m.logger.Error("禁用Token失败: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "登出失败",

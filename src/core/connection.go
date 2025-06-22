@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -149,7 +150,7 @@ func NewConnectionHandler(
 	ctx context.Context,
 ) *ConnectionHandler {
 	// 初始化数据库服务
-	dbService, err := database.NewDatabase(&config.Database, logger)
+	dbService, err := database.NewDatabase(&config.Database)
 	if err != nil {
 		logger.Error("初始化数据库连接失败: %v", err)
 		// 如果数据库连接失败，继续使用默认配置
@@ -1140,23 +1141,26 @@ func (h *ConnectionHandler) initializeDeviceCapabilities(deviceID string) {
 		return
 	}
 
-	// 获取设备能力配置（带回退逻辑）
-	// 注意：这里暂时使用nil作为userID，因为语音交流时可能没有用户上下文
-	config, err := h.configService.GetDeviceCapabilityConfigWithFallback(deviceID, nil)
+	// 设备能力回退逻辑：不传userID
+	config, err := h.configService.GetDeviceCapabilityConfigWithFallback(parseUint(deviceID), nil)
 	if err != nil {
 		h.logger.Error("获取设备能力配置失败: %v", err)
 		return
 	}
-
-	if config == nil {
+	if config == nil || len(config.Capabilities) == 0 {
 		h.logger.Info("设备 %s 没有自定义能力配置，使用默认配置", deviceID)
 		return
 	}
 
-	h.logger.Info("设备 %s 使用自定义能力配置，共 %d 个能力", deviceID, len(config.Capabilities))
-
+	h.logger.Info("设备 %s 使用能力配置，共 %d 个能力", deviceID, len(config.Capabilities))
 	// 根据配置创建提供者
 	h.createProvidersFromConfig(config)
+}
+
+// parseUint 辅助函数
+func parseUint(s string) uint {
+	u, _ := strconv.ParseUint(s, 10, 32)
+	return uint(u)
 }
 
 // createProvidersFromConfig 根据配置创建提供者

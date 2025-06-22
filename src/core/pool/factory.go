@@ -23,12 +23,12 @@ import (
 
 // ProviderFactory 简化的提供者工厂
 type ProviderFactory struct {
-	providerType string
-	config       interface{}
-	logger       *utils.Logger
-	params       map[string]interface{} // 可选参数
-	configService *database.ConfigService // 数据库配置服务
-	grayscaleManager *GrayscaleManager // 灰度发布管理器
+	providerType     string
+	config           interface{}
+	logger           *utils.Logger
+	params           map[string]interface{}  // 可选参数
+	configService    *database.ConfigService // 数据库配置服务
+	grayscaleManager *GrayscaleManager       // 灰度发布管理器
 }
 
 func (f *ProviderFactory) Create() (interface{}, error) {
@@ -95,18 +95,18 @@ func NewASRFactory(asrType string, configService *database.ConfigService, logger
 	// 从灰度管理器获取ASR配置
 	var providerConfig *database.ProviderConfig
 	var err error
-	
+
 	if grayscaleManager != nil {
 		providerConfig, err = grayscaleManager.GetProviderConfig("ASR", asrType)
 	} else {
-		providerConfig, err = configService.GetProviderConfig("ASR", asrType)
+		providerConfig, err = configService.GetProviderConfigByCategoryAndName("ASR", asrType)
 	}
-	
+
 	if err != nil {
 		logger.Error("获取ASR配置失败: %v", err)
 		return nil
 	}
-	
+
 	return &ProviderFactory{
 		providerType: "asr",
 		config: &asr.Config{
@@ -124,7 +124,7 @@ func NewASRFactory(asrType string, configService *database.ConfigService, logger
 			"type":         providerConfig.Type,
 			"delete_audio": deleteAudio,
 		},
-		configService: configService,
+		configService:    configService,
 		grayscaleManager: grayscaleManager,
 	}
 }
@@ -133,18 +133,25 @@ func NewLLMFactory(llmType string, configService *database.ConfigService, logger
 	// 从灰度管理器获取LLM配置
 	var providerConfig *database.ProviderConfig
 	var err error
-	
+
 	if grayscaleManager != nil {
 		providerConfig, err = grayscaleManager.GetProviderConfig("LLM", llmType)
 	} else {
-		providerConfig, err = configService.GetProviderConfig("LLM", llmType)
+		providerConfig, err = configService.GetProviderConfigByCategoryAndName("LLM", llmType)
 	}
-	
+
 	if err != nil {
 		logger.Error("获取LLM配置失败: %v", err)
 		return nil
 	}
-	
+
+	var extra map[string]interface{}
+	if len(providerConfig.Extra) > 0 {
+		if err := json.Unmarshal(providerConfig.Extra, &extra); err != nil {
+			logger.Error("解析LLM extra配置失败: %v", err)
+		}
+	}
+
 	return &ProviderFactory{
 		providerType: "llm",
 		config: &llm.Config{
@@ -155,10 +162,10 @@ func NewLLMFactory(llmType string, configService *database.ConfigService, logger
 			Temperature: providerConfig.Temperature,
 			MaxTokens:   providerConfig.MaxTokens,
 			TopP:        providerConfig.TopP,
-			Extra:       providerConfig.Extra,
+			Extra:       extra,
 		},
-		logger: logger,
-		configService: configService,
+		logger:           logger,
+		configService:    configService,
 		grayscaleManager: grayscaleManager,
 	}
 }
@@ -167,18 +174,18 @@ func NewTTSFactory(ttsType string, configService *database.ConfigService, logger
 	// 从灰度管理器获取TTS配置
 	var providerConfig *database.ProviderConfig
 	var err error
-	
+
 	if grayscaleManager != nil {
 		providerConfig, err = grayscaleManager.GetProviderConfig("TTS", ttsType)
 	} else {
-		providerConfig, err = configService.GetProviderConfig("TTS", ttsType)
+		providerConfig, err = configService.GetProviderConfigByCategoryAndName("TTS", ttsType)
 	}
-	
+
 	if err != nil {
 		logger.Error("获取TTS配置失败: %v", err)
 		return nil
 	}
-	
+
 	return &ProviderFactory{
 		providerType: "tts",
 		config: &tts.Config{
@@ -195,7 +202,7 @@ func NewTTSFactory(ttsType string, configService *database.ConfigService, logger
 			"type":         providerConfig.Type,
 			"delete_audio": deleteAudio,
 		},
-		configService: configService,
+		configService:    configService,
 		grayscaleManager: grayscaleManager,
 	}
 }
@@ -204,24 +211,34 @@ func NewVLLLMFactory(vlllmType string, configService *database.ConfigService, lo
 	// 从灰度管理器获取VLLLM配置
 	var providerConfig *database.ProviderConfig
 	var err error
-	
+
 	if grayscaleManager != nil {
 		providerConfig, err = grayscaleManager.GetProviderConfig("VLLLM", vlllmType)
 	} else {
-		providerConfig, err = configService.GetProviderConfig("VLLLM", vlllmType)
+		providerConfig, err = configService.GetProviderConfigByCategoryAndName("VLLLM", vlllmType)
 	}
-	
+
 	if err != nil {
 		logger.Error("获取VLLLM配置失败: %v", err)
 		return nil
 	}
-	
+
 	// 转换Security配置
 	var security vlllm.SecurityConfig
-	if providerConfig.Security != nil {
-		securityBytes, _ := json.Marshal(providerConfig.Security)
-		_ = json.Unmarshal(securityBytes, &security)
+	if len(providerConfig.Security) > 0 {
+		if err := json.Unmarshal(providerConfig.Security, &security); err != nil {
+			logger.Error("解析VLLLM security配置失败: %v", err)
+		}
 	}
+
+	// 转换Extra配置
+	var extra map[string]interface{}
+	if len(providerConfig.Extra) > 0 {
+		if err := json.Unmarshal(providerConfig.Extra, &extra); err != nil {
+			logger.Error("解析VLLLM extra配置失败: %v", err)
+		}
+	}
+
 	return &ProviderFactory{
 		providerType: "vlllm",
 		config: &vlllm.VLLLMConfig{
@@ -233,10 +250,10 @@ func NewVLLLMFactory(vlllmType string, configService *database.ConfigService, lo
 			MaxTokens:   providerConfig.MaxTokens,
 			TopP:        providerConfig.TopP,
 			Security:    security,
-			Extra:       providerConfig.Extra,
+			Extra:       extra,
 		},
-		logger: logger,
-		configService: configService,
+		logger:           logger,
+		configService:    configService,
 		grayscaleManager: grayscaleManager,
 	}
 }

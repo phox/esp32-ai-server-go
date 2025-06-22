@@ -221,7 +221,7 @@ func (gm *GrayscaleManager) UpdateWeight(category, name, version string, weight 
 
 // UpdateHealthScore 更新健康评分
 func (gm *GrayscaleManager) UpdateHealthScore(category, name, version string, healthScore float64) error {
-	err := gm.configService.UpdateProviderHealthScore(category, name, version, healthScore)
+	err := gm.configService.UpdateProviderHealthScoreByKey(category, name, version, healthScore)
 	if err != nil {
 		return err
 	}

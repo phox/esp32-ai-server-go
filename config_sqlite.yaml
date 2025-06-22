@@ -12,7 +12,6 @@ server:
 database:
   type: sqlite
   name: ./data/test.db
-  file_path: ./data/test.db
   max_open_conns: 1
   max_idle_conns: 1
   conn_max_lifetime: 3600s
