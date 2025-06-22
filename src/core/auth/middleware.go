@@ -3,7 +3,6 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -106,6 +105,8 @@ func (m *AuthMiddleware) AuthRequired() gin.HandlerFunc {
 
 		// 将用户信息存储到上下文中
 		c.Set("user", user)
+		c.Set("user_id", user.ID)
+		c.Set("user_role", user.Role)
 		c.Set("userAuth", userAuth)
 		c.Next()
 	}
@@ -114,23 +115,24 @@ func (m *AuthMiddleware) AuthRequired() gin.HandlerFunc {
 // RoleRequired 需要特定角色的中间件
 func (m *AuthMiddleware) RoleRequired(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 先执行认证
-		m.AuthRequired()(c)
-		if c.IsAborted() {
-			return
-		}
-
 		// 获取用户信息
 		user, exists := c.Get("user")
 		if !exists {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "用户信息获取失败",
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "无效的认证会话",
 			})
 			c.Abort()
 			return
 		}
 
-		userObj := user.(*database.User)
+		userObj, ok := user.(*database.User)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "用户信息格式错误",
+			})
+			c.Abort()
+			return
+		}
 
 		// 检查用户角色
 		hasRole := false
@@ -143,7 +145,7 @@ func (m *AuthMiddleware) RoleRequired(roles ...string) gin.HandlerFunc {
 
 		if !hasRole {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": fmt.Sprintf("需要角色权限: %v", roles),
+				"error": "需要管理员权限",
 			})
 			c.Abort()
 			return
@@ -209,6 +211,8 @@ func (m *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
 
 		// 将用户信息存储到上下文中
 		c.Set("user", user)
+		c.Set("user_id", user.ID)
+		c.Set("user_role", user.Role)
 		c.Set("userAuth", userAuth)
 		c.Next()
 	}

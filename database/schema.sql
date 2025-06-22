@@ -256,7 +256,7 @@ INSERT INTO ai_capabilities (capability_name, capability_type, display_name, des
 ('VLLLM', 'ollama', 'Ollama视觉模型', 'Ollama本地视觉模型', TRUE, '{"url": "string", "model_name": "string", "max_tokens": "int"}'),
 
 -- MCP能力
-('MCP', 'xiaozhi', '小智MCP工具', 'ESP32小智内置MCP工具', TRUE, '{}'),
+('MCP', 'xiaozhi', '小智MCP工具', '小智内置MCP工具', TRUE, '{}'),
 ('MCP', 'external', '外部MCP服务', '外部MCP服务器', TRUE, '{"command": "string", "args": "array", "env": "object"}');
 
 -- 插入默认全局配置

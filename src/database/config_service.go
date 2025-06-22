@@ -833,3 +833,15 @@ func (s *ConfigService) GetDeviceCapabilityConfigWithFallback(deviceID uint, use
 
 	return &result, nil
 }
+
+// GetDefaultCapabilities 获取默认AI能力列表
+func (s *ConfigService) GetDefaultCapabilities() ([]*AICapability, error) {
+	var defaults []*AICapability
+	if err := s.db.DB.Where("is_global = ? AND is_active = ?", true, true).Find(&defaults).Error; err != nil {
+		return nil, err
+	}
+	if defaults == nil {
+		defaults = []*AICapability{}
+	}
+	return defaults, nil
+}

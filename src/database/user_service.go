@@ -463,31 +463,25 @@ func (s *UserService) GetUserWithCapabilities(userID uint) (*UserWithCapabilitie
 }
 
 // GetUserStats 获取用户统计信息
-func (s *UserService) GetUserStats(userID uint) (map[string]interface{}, error) {
-	var stats map[string]interface{}
+func (s *UserService) GetUserStats() (map[string]interface{}, error) {
+	var totalUsers int64
+	var activeUsers int64
+	var inactiveUsers int64
 
-	// 统计设备数量
-	var deviceCount int64
-	if err := s.db.DB.Model(&UserDevice{}).Where("user_id = ? AND is_active = ?", userID, true).Count(&deviceCount).Error; err != nil {
-		return nil, fmt.Errorf("统计设备数量失败: %v", err)
+	if err := s.db.DB.Model(&User{}).Count(&totalUsers).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.DB.Model(&User{}).Where("status = ?", "active").Count(&activeUsers).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.DB.Model(&User{}).Where("status = ?", "inactive").Count(&inactiveUsers).Error; err != nil {
+		return nil, err
 	}
 
-	// 统计AI能力数量
-	var capabilityCount int64
-	if err := s.db.DB.Model(&UserCapability{}).Where("user_id = ? AND is_active = ?", userID, true).Count(&capabilityCount).Error; err != nil {
-		return nil, fmt.Errorf("统计AI能力数量失败: %v", err)
-	}
-
-	// 统计会话数量
-	var sessionCount int64
-	if err := s.db.DB.Model(&Session{}).Where("user_id = ?", userID).Count(&sessionCount).Error; err != nil {
-		return nil, fmt.Errorf("统计会话数量失败: %v", err)
-	}
-
-	stats = map[string]interface{}{
-		"device_count":     deviceCount,
-		"capability_count": capabilityCount,
-		"session_count":    sessionCount,
+	stats := map[string]interface{}{
+		"total_users":    totalUsers,
+		"active_users":   activeUsers,
+		"inactive_users": inactiveUsers,
 	}
 
 	return stats, nil

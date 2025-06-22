@@ -60,6 +60,7 @@ func (userApi *UserAPI) RegisterRoutes(r gin.IRouter) {
 	{
 		// 用户CRUD
 		users.GET("", userApi.authMiddleware.AdminRequired(), userApi.ListUsers)
+		users.GET("/stats", userApi.authMiddleware.AdminRequired(), userApi.GetUserStats)
 		users.POST("", userApi.authMiddleware.AdminRequired(), userApi.CreateUser)
 		users.GET("/:id", userApi.GetUser)
 		users.PUT("/:id", userApi.UpdateUser)
@@ -115,36 +116,29 @@ func (userApi *UserAPI) RegisterRoutes(r gin.IRouter) {
 	}
 
 	// 系统配置管理路由（仅管理员）
-	systemConfigs := r.Group("/system-configs")
-	systemConfigs.Use(userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.AdminRequired())
+	configs := r.Group("/configs")
+	configs.Use(userApi.authMiddleware.AuthRequired(), userApi.authMiddleware.AdminRequired())
 	{
-		systemConfigs.GET("", userApi.GetSystemConfigs)
-		systemConfigs.GET("/:category/:key", userApi.GetSystemConfig)
-		systemConfigs.POST("", userApi.SetSystemConfig)
-		systemConfigs.DELETE("/:category/:key", userApi.DeleteSystemConfig)
-		systemConfigs.GET("/:category", userApi.GetSystemConfigCategory)
-		systemConfigs.POST("/initialize", userApi.InitializeSystemConfigs)
+		configs.GET("", userApi.GetSystemConfigs)
+		configs.GET("/:category/:key", userApi.GetSystemConfig)
+		configs.POST("", userApi.SetSystemConfig)
+		configs.DELETE("/:category/:key", userApi.DeleteSystemConfig)
+		configs.GET("/:category", userApi.GetSystemConfigCategory)
+		configs.POST("/initialize", userApi.InitializeSystemConfigs)
 
 		// Provider配置管理API
-		systemConfigs.GET("/provider", userApi.ListProviderConfigs)
-		systemConfigs.GET("/provider/:category/:name", userApi.GetProviderConfig)
-		systemConfigs.POST("/provider", userApi.CreateProviderConfig)
-		systemConfigs.PUT("/provider/:category/:name", userApi.UpdateProviderConfig)
-		systemConfigs.DELETE("/provider/:category/:name", userApi.DeleteProviderConfig)
+		configs.GET("/provider", userApi.ListProviderConfigs)
+		configs.GET("/provider/:category/:name", userApi.GetProviderConfig)
+		configs.POST("/provider", userApi.CreateProviderConfig)
+		configs.PUT("/provider/:category/:name", userApi.UpdateProviderConfig)
+		configs.DELETE("/provider/:category/:name", userApi.DeleteProviderConfig)
 
 		// 灰度发布管理API
-		systemConfigs.GET("/provider/:category/:name/versions", userApi.ListProviderVersions)
-		systemConfigs.GET("/provider/:category/:name/grayscale", userApi.GetGrayscaleStatus)
-		systemConfigs.PUT("/provider/:category/:name/weight", userApi.UpdateProviderWeight)
-		systemConfigs.PUT("/provider/:category/:name/default", userApi.SetDefaultProviderVersion)
-		systemConfigs.POST("/provider/:category/:name/refresh", userApi.RefreshGrayscaleConfig)
-	}
-
-	// 用户统计路由
-	stats := r.Group("/stats")
-	stats.Use(userApi.authMiddleware.AuthRequired())
-	{
-		stats.GET("/users", userApi.GetUserStats)
+		configs.GET("/provider/:category/:name/versions", userApi.ListProviderVersions)
+		configs.GET("/provider/:category/:name/grayscale", userApi.GetGrayscaleStatus)
+		configs.PUT("/provider/:category/:name/weight", userApi.UpdateProviderWeight)
+		configs.PUT("/provider/:category/:name/default", userApi.SetDefaultProviderVersion)
+		configs.POST("/provider/:category/:name/refresh", userApi.RefreshGrayscaleConfig)
 	}
 }
 
@@ -169,6 +163,9 @@ func (userApi *UserAPI) ListUsers(c *gin.Context) {
 		return
 	}
 
+	if users == nil {
+		users = []*database.User{}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"data": users,
 		"pagination": gin.H{
@@ -1234,18 +1231,18 @@ func (userApi *UserAPI) DeleteCapability(c *gin.Context) {
 
 // GetDefaultCapabilities 获取默认AI能力列表
 func (userApi *UserAPI) GetDefaultCapabilities(c *gin.Context) {
-	caps, err := userApi.configService.ListAICapabilities("")
+	defaults, err := userApi.configService.GetDefaultCapabilities()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取AI能力列表失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取默认AI能力失败"})
 		return
 	}
-	var result []database.AICapability
-	for _, cap := range caps {
-		if cap.IsGlobal && cap.IsActive {
-			result = append(result, *cap)
-		}
+	if defaults == nil {
+		defaults = []*database.AICapability{}
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    defaults,
+	})
 }
 
 // SetDefaultCapability 设置系统默认AI能力
@@ -1287,21 +1284,16 @@ func (userApi *UserAPI) RemoveDefaultCapability(c *gin.Context) {
 
 // GetUserStats 获取用户统计信息
 func (api *UserAPI) GetUserStats(c *gin.Context) {
-	userID := api.getUserIDFromContext(c)
-	if userID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
-		return
-	}
-
-	stats, err := api.userService.GetUserStats(uint(userID))
+	stats, err := api.userService.GetUserStats()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取用户统计失败: %v", err)})
+		api.logger.Error("获取用户统计失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取用户统计失败",
+		})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    stats,
+		"data": stats,
 	})
 }
 
