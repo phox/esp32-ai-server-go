@@ -1,220 +1,132 @@
-# 多数据库支持
+# 数据库支持说明
 
-本项目现在支持多种数据库，包括 MySQL、PostgreSQL 和 SQLite。
+本项目已全面采用 [GORM](https://gorm.io/) 作为 Go 语言的 ORM（对象关系映射）组件，支持多种主流数据库，极大提升了开发效率和数据库兼容性。
 
-## 支持的数据库
+## 1. 支持的数据库类型
+- MySQL
+- PostgreSQL
+- SQLite
 
-### 1. MySQL
-- **驱动**: `github.com/go-sql-driver/mysql`
-- **版本**: 5.7+, 8.0+
-- **特点**: 高性能、功能丰富、广泛使用
+## 2. 主要数据模型与表结构
+所有数据表均通过 GORM 的模型自动生成，主要模型包括：
+- **User**：用户表，含用户名、邮箱、密码、角色、状态等字段，支持唯一索引。
+- **Device**：设备表，含设备UUID、OUI、SN、名称、型号、状态等。
+- **UserDevice**：用户与设备的绑定关系，支持多用户多设备，含权限、别名、是否所有者等。
+- **AICapability**：AI能力表，描述能力类型、名称、配置Schema等。
+- **UserCapability/DeviceCapability**：用户/设备与AI能力的绑定及配置。
+- **ProviderConfig**：AI Provider 配置表，支持多类型Provider及版本、权重、扩展参数。
+- **UserProvider/DeviceProvider**：用户/设备与Provider的绑定表。
+- **Session/UsageStats**：会话与统计信息。
+- **GlobalConfig/SystemConfig**：全局与系统配置表。
 
-### 2. PostgreSQL
-- **驱动**: `github.com/lib/pq`
-- **版本**: 10+
-- **特点**: 功能强大、支持复杂查询、ACID 事务
+所有模型均支持 GORM 的自动迁移、外键、索引、JSON字段等高级特性。详细结构见 `src/database/models.go`。
 
-### 3. SQLite
-- **驱动**: `github.com/mattn/go-sqlite3`
-- **版本**: 3.x
-- **特点**: 轻量级、文件数据库、无需服务器
+## 3. GORM 主要特性
+- 自动建表与结构迁移（AutoMigrate）
+- 事务支持
+- 连接池管理
+- 丰富的模型定义与关联关系
+- 支持多数据库切换
+- 代码即模型，易于维护
 
-## 配置说明
+## 4. 配置方法
+数据库相关配置在 `config.yaml` 文件中：
 
-### 基础配置
-
-在 `config.yaml` 中配置数据库连接：
-
+## 4.1 MySQL 配置示例
 ```yaml
-database:
-  # 数据库类型：mysql, postgresql, sqlite
+Database:
   type: mysql
-  
-  # 连接池配置
-  max_open_conns: 100
-  max_idle_conns: 10
-  conn_max_lifetime: 3600s
-```
-
-### MySQL 配置
-
-```yaml
-database:
-  type: mysql
-  host: localhost
+  host: 127.0.0.1
   port: 3306
   user: root
-  password: "your_password"
-  name: ai_server_go
-  charset: utf8mb4
-  parse_time: true
-  loc: Local
+  password: yourpassword
+  name: ai_server
   max_open_conns: 100
   max_idle_conns: 10
   conn_max_lifetime: 3600s
 ```
 
-### PostgreSQL 配置
-
+## 4.2 SQLite 配置示例
 ```yaml
-database:
+Database:
+  type: sqlite
+  name: ./data/ai_server.db   # SQLite数据库文件路径
+  max_open_conns: 1           # 建议单连接
+  max_idle_conns: 1
+  conn_max_lifetime: 3600s
+```
+
+## 4.3 PostgreSQL 配置示例
+```yaml
+Database:
   type: postgresql
-  host: localhost
+  host: 127.0.0.1
   port: 5432
   user: postgres
-  password: "your_password"
-  name: ai_server_go
-  ssl_mode: disable  # disable, require, verify-ca, verify-full
+  password: yourpassword
+  name: ai_server
+  ssl_mode: disable           # 可选: disable, require, verify-ca, verify-full
   max_open_conns: 100
   max_idle_conns: 10
   conn_max_lifetime: 3600s
 ```
 
-### SQLite 配置
+## 5. 连接池与性能调优
+- 连接池参数（最大连接数、最大空闲数、最大生命周期）可在配置文件中调整。
+- 支持高并发场景下的连接池自动管理。
+- 日志级别可调，便于开发和生产环境调试。
 
-```yaml
-database:
-  type: sqlite
-  name: ./data/ai_server.db
-  file_path: ./data/ai_server.db
-  max_open_conns: 1
-  max_idle_conns: 1
-  conn_max_lifetime: 3600s
-```
+## 6. 自动迁移与升级
+- 系统启动时自动执行所有模型的 `AutoMigrate`，无需手动建表。
+- 支持平滑升级表结构，字段变更自动同步到数据库。
+- 如需自定义表名、索引、外键等，可在模型结构体中通过 GORM Tag 配置。
 
-## 数据库方言支持
+## 7. 事务支持
+- 支持显式事务（`Begin`/`Commit`/`Rollback`）和函数式事务（`db.Transaction(func(tx *gorm.DB) error { ... })`）。
+- 推荐在涉及多表写操作时使用事务，保证数据一致性。
 
-系统自动根据数据库类型使用相应的 SQL 方言：
-
-### 占位符
-- **MySQL**: `?`
-- **PostgreSQL**: `$1`, `$2`, `$3`...
-- **SQLite**: `?`
-
-### 自增主键
-- **MySQL**: `AUTO_INCREMENT`
-- **PostgreSQL**: `SERIAL`
-- **SQLite**: `AUTOINCREMENT`
-
-### 数据类型映射
-- **BOOLEAN**: MySQL/PostgreSQL 使用 `BOOLEAN`，SQLite 使用 `INTEGER`
-- **TEXT**: 所有数据库都支持
-- **TIMESTAMP**: 所有数据库都支持
-
-## 数据库迁移
-
-系统启动时会自动执行数据库迁移，创建必要的表和索引：
-
-### 表结构
-1. **users** - 用户表
-2. **devices** - 设备表
-3. **device_capabilities** - 设备能力配置表
-4. **system_configs** - 系统配置表
-5. **provider_configs** - AI 提供商配置表
-
-### 索引
-- 用户名唯一索引
-- 设备用户关联索引
-- 配置分类键值索引
-- 提供商分类名称索引
-
-## 使用建议
-
-### 开发环境
-推荐使用 **SQLite**，配置简单，无需安装数据库服务器：
-
-```yaml
-database:
-  type: sqlite
-  name: ./data/dev.db
-  max_open_conns: 1
-  max_idle_conns: 1
-```
-
-### 生产环境
-推荐使用 **MySQL** 或 **PostgreSQL**：
-
-- **MySQL**: 适合大多数场景，性能好，社区支持广泛
-- **PostgreSQL**: 适合需要复杂查询和高级功能的场景
-
-### 性能调优
-
-#### MySQL
-```yaml
-database:
-  type: mysql
-  max_open_conns: 200
-  max_idle_conns: 20
-  conn_max_lifetime: 3600s
-```
-
-#### PostgreSQL
-```yaml
-database:
-  type: postgresql
-  max_open_conns: 100
-  max_idle_conns: 10
-  conn_max_lifetime: 3600s
-  ssl_mode: require  # 生产环境建议启用 SSL
-```
-
-#### SQLite
-```yaml
-database:
-  type: sqlite
-  max_open_conns: 1  # SQLite 建议使用单连接
-  max_idle_conns: 1
-  conn_max_lifetime: 3600s
-```
-
-## 故障排除
-
-### 常见问题
-
-1. **连接失败**
-   - 检查数据库服务是否启动
-   - 验证连接参数是否正确
-   - 确认网络连接是否正常
-
-2. **权限问题**
-   - MySQL/PostgreSQL: 确认用户有相应权限
-   - SQLite: 确认文件路径可写
-
-3. **字符集问题**
-   - MySQL: 使用 `utf8mb4` 字符集
-   - PostgreSQL: 使用 `UTF8` 编码
-
-4. **SSL 连接问题**
-   - PostgreSQL: 根据服务器配置调整 `ssl_mode`
-
-### 日志调试
-
-启动时查看日志输出：
-```
-INFO 连接数据库: mysql
-INFO 数据库连接成功: mysql
-INFO 开始数据库迁移...
-INFO 创建表: users
-INFO 创建表: devices
-INFO 数据库迁移完成
-```
-
-## 扩展支持
-
-如需支持其他数据库，可以：
-
-1. 在 `dialect.go` 中实现新的方言接口
-2. 在 `connection.go` 中添加新的 DSN 构建函数
-3. 更新配置结构体支持新数据库的特定参数
-
-## 依赖管理
-
-确保 `go.mod` 包含必要的数据库驱动：
-
+**事务代码示例：**
 ```go
-require (
-    github.com/go-sql-driver/mysql v1.8.1  // MySQL
-    github.com/lib/pq v1.10.9              // PostgreSQL
-    github.com/mattn/go-sqlite3 v1.14.28   // SQLite
-)
-``` 
+err := db.Transaction(func(tx *gorm.DB) error {
+    if err := tx.Create(&user).Error; err != nil {
+        return err
+    }
+    if err := tx.Create(&device).Error; err != nil {
+        return err
+    }
+    return nil
+})
+```
+
+## 8. 关联关系与高级用法
+- 支持一对多、多对多、外键、级联删除等复杂关系。
+- 通过 `gorm:"foreignKey:XXX"`、`gorm:"uniqueIndex"` 等Tag实现约束。
+- JSON字段（如权限、配置等）自动序列化/反序列化。
+
+**模型定义示例：**
+```go
+type User struct {
+    gorm.Model
+    Username string `gorm:"uniqueIndex;size:50;not null"`
+    // ...
+}
+```
+
+## 9. 多数据库兼容
+- 支持 MySQL、PostgreSQL、SQLite，切换只需修改配置文件。
+- 各数据库的方言和特性由 GORM 自动适配。
+
+## 10. 常见开发场景举例
+- **新增模型**：在 `models.go` 中定义结构体，重启服务自动建表。
+- **数据查询**：`db.Where(...).Find(&objs)`、`db.First(&obj, id)` 等。
+- **复杂查询**：支持联表、聚合、原生SQL等。
+- **数据迁移**：升级模型结构体，重启服务自动迁移。
+
+## 11. 进阶参考
+- [GORM 关联关系文档](https://gorm.io/zh_CN/docs/associations.html)
+- [GORM 事务文档](https://gorm.io/zh_CN/docs/transactions.html)
+- [GORM 迁移文档](https://gorm.io/zh_CN/docs/migration.html)
+- [GORM 官方文档](https://gorm.io/zh_CN/)
+- [GORM GitHub](https://github.com/go-gorm/gorm)
+
+如需更详细的表结构、字段说明或高级用法，请查阅 `src/database/models.go` 或 GORM 官方文档。 
