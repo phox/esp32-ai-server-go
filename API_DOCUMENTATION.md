@@ -898,4 +898,245 @@ curl -X POST http://localhost:8080/api/system-configs \
 {
   "error": "设置系统配置失败: 配置类型错误"
 }
+```
+
+## 1. AI Provider 配置与绑定 API（后端实现版）
+
+## 1.1 Provider 配置管理
+
+### 1.1.1 获取 Provider 配置列表
+- **GET** `/api/configs/provider?category={category}`
+- **描述**: 获取所有或指定类型（ASR/TTS/LLM/VLLLM）的 Provider 配置列表
+- **权限**: 认证用户
+- **参数**:
+  - `category`（可选）: Provider类别
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "data": [
+      {
+        "id": 1,
+        "category": "llm",
+        "name": "openai",
+        "type": "openai",
+        "version": "v1",
+        "weight": 100,
+        "is_active": true,
+        "is_default": false,
+        "props": { ... },
+        "created_at": "...",
+        "updated_at": "..."
+      }
+    ]
+  }
+  ```
+
+### 1.1.2 获取单个 Provider 配置
+- **GET** `/api/configs/provider/{id}`
+- **描述**: 获取指定ID的 Provider 配置
+
+### 1.1.3 创建 Provider 配置
+- **POST** `/api/configs/provider`
+- **权限**: 管理员
+- **请求体**:
+  ```json
+  {
+    "category": "llm",
+    "name": "openai",
+    "type": "openai",
+    "version": "v1",
+    "weight": 100,
+    "is_active": true,
+    "is_default": false,
+    "props": { ... }
+  }
+  ```
+
+### 1.1.4 更新 Provider 配置
+- **PUT** `/api/configs/provider/{id}`
+- **权限**: 管理员
+- **请求体**: 同上
+
+### 1.1.5 删除 Provider 配置
+- **DELETE** `/api/configs/provider/{id}`
+- **权限**: 管理员
+
+## 1.2 Provider 绑定与优先级
+
+### 1.2.1 用户绑定 Provider
+- **POST** `/api/user/provider/bind`
+- **权限**: 认证用户（仅本人或管理员）
+- **请求体**:
+  ```json
+  {
+    "user_id": 1,
+    "provider_id": 2,
+    "category": "llm"
+  }
+  ```
+- **说明**: 绑定后该用户在该类别下优先使用此 Provider
+
+### 1.2.2 用户解绑 Provider
+- **POST** `/api/user/provider/unbind`
+- **权限**: 认证用户（仅本人或管理员）
+- **请求体**:
+  ```json
+  {
+    "user_id": 1,
+    "category": "llm"
+  }
+  ```
+
+### 1.2.3 查询用户绑定 Provider
+- **GET** `/api/user/provider/list?user_id=1`
+- **权限**: 认证用户
+- **响应**: Provider 绑定关系列表
+
+### 1.2.4 设备绑定 Provider
+- **POST** `/api/device/provider/bind`
+- **权限**: 认证用户（仅设备所有者或管理员）
+- **请求体**:
+  ```json
+  {
+    "device_id": 1,
+    "provider_id": 2,
+    "category": "llm"
+  }
+  ```
+
+### 1.2.5 设备解绑 Provider
+- **POST** `/api/device/provider/unbind`
+- **权限**: 认证用户（仅设备所有者或管理员）
+- **请求体**:
+  ```json
+  {
+    "device_id": 1,
+    "category": "llm"
+  }
+  ```
+
+### 1.2.6 查询设备绑定 Provider
+- **GET** `/api/device/provider/list?device_id=1`
+- **权限**: 认证用户
+
+### 1.2.7 Provider 下拉列表
+- **GET** `/api/provider/list?category=llm`
+- **描述**: 获取指定类型 Provider 列表（只读，供前端下拉选择）
+- **参数**:
+  - `category`（可选）: Provider类别（如 TTS/ASR/LLM/VLLLM）
+- **返回**:
+  ```json
+  [
+    {
+      "id": 1,
+      "category": "llm",
+      "name": "openai",
+      "type": "openai",
+      "version": "v1",
+      "weight": 100,
+      "is_active": true,
+      "is_default": false,
+      "props": { ... },
+      "created_at": "...",
+      "updated_at": "..."
+    }
+  ]
+  ```
+
+### 1.2.8 获取生效 Provider（优先级查找）
+- **后端服务方法**: `GetEffectiveProvider(category, deviceID, userID)`
+- **优先级**: 设备专属 > 用户自定义 > 系统默认
+
+## 1.3 Provider 灰度发布与版本管理
+
+### 1.3.1 获取 Provider 版本列表
+- **GET** `/api/configs/provider/{id}/versions`
+- **描述**: 获取指定 Provider 的所有版本
+
+### 1.3.2 设置默认 Provider 版本
+- **PUT** `/api/configs/provider/{id}/default`
+- **权限**: 管理员
+- **请求体**:
+  ```json
+  {
+    "version": "v2"
+  }
+  ```
+
+### 1.3.3 获取灰度发布状态
+- **GET** `/api/configs/provider/{id}/grayscale`
+- **描述**: 获取指定 Provider 的灰度发布状态
+
+### 1.3.4 更新 Provider 版本权重
+- **PUT** `/api/configs/provider/{id}/weight`
+- **权限**: 管理员
+- **请求体**:
+  ```json
+  {
+    "weight": 50
+  }
+  ```
+
+### 1.3.5 刷新 Provider 灰度配置
+- **POST** `/api/configs/provider/{id}/refresh`
+- **权限**: 管理员
+
+## 1.4 Provider 配置数据结构
+
+### 1.4.1 ProviderConfig
+```json
+{
+  "id": 1,
+  "category": "llm",
+  "name": "openai",
+  "type": "openai",
+  "version": "v1",
+  "weight": 100,
+  "is_active": true,
+  "is_default": false,
+  "props": {
+    "api_key": "...",
+    "model_name": "...",
+    "base_url": "...",
+    "temperature": 0.7,
+    "max_tokens": 1000
+  },
+  "created_at": "...",
+  "updated_at": "..."
+}
+```
+- **props** 字段为 JSON，结构由各 Provider 自定义。
+
+## 1.5 其他注意事项
+
+- Provider 配置全部走 props（JSON），便于扩展和热更新。
+- 绑定优先级：设备专属 > 用户自定义 > 系统默认。
+- API 返回统一错误格式，注意处理权限和参数校验。
+- 灰度发布相关接口仅管理员可用。
+
+---
+
+如需更详细的接口参数、响应示例、错误码等，请参考本文件其他章节或后端源码。
+如需前端集成示例或后端结构说明，可进一步补充。
+
+**建议：**
+将上述内容补充/替换到 `API_DOCUMENTATION.md` Provider 相关章节，确保文档与后端实现一致。
+
+```json
+{
+  "error": "需要管理员权限"
+}
+```
+
+```json
+{
+  "error": "系统配置不存在"
+}
+```
+
+```json
+{
+  "error": "设置系统配置失败: 配置类型错误"
+}
 ``` 
