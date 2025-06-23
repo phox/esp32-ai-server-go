@@ -4,6 +4,7 @@ import (
 	"ai-server-go/src/core/providers/llm"
 	"ai-server-go/src/core/types"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -18,6 +19,21 @@ type Provider struct {
 	isQwen3   bool
 }
 
+// 配置结构体
+type OllamaLLMConfig struct {
+	BaseURL   string `json:"base_url"`
+	ModelName string `json:"model_name"`
+}
+
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 // 注册提供者
 func init() {
 	llm.Register("ollama", NewProvider)
@@ -25,15 +41,19 @@ func init() {
 
 // NewProvider 创建Ollama提供者
 func NewProvider(config *llm.Config) (llm.Provider, error) {
+	var cfg OllamaLLMConfig
+	if err := parseProps(config.Extra, &cfg); err != nil {
+		return nil, fmt.Errorf("配置解析失败: %v", err)
+	}
 	base := llm.NewBaseProvider(config)
 	provider := &Provider{
 		BaseProvider: base,
-		modelName:    config.ModelName,
+		modelName:    cfg.ModelName,
 	}
-
-	// 检查是否是qwen3模型
-	provider.isQwen3 = config.ModelName != "" && strings.HasPrefix(strings.ToLower(config.ModelName), "qwen3")
-
+	provider.isQwen3 = cfg.ModelName != "" && strings.HasPrefix(strings.ToLower(cfg.ModelName), "qwen3")
+	// 将解析到的配置写回 config 以兼容后续逻辑
+	config.BaseURL = cfg.BaseURL
+	config.ModelName = cfg.ModelName
 	return provider, nil
 }
 

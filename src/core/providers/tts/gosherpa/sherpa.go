@@ -3,6 +3,7 @@ package gosherpa
 import (
 	"ai-server-go/src/core/providers/tts"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,18 +18,38 @@ type Provider struct {
 	conn *websocket.Conn
 }
 
+// 配置结构体
+type GoSherpaTTSConfig struct {
+	Cluster   string `json:"cluster"`
+	OutputDir string `json:"output_dir"`
+}
+
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 // NewProvider 创建Sherpa TTS提供者
 func NewProvider(config *tts.Config, deleteFile bool) (*Provider, error) {
-	base := tts.NewBaseProvider(config, deleteFile)
-
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second, // 设置握手超时
+	var cfg GoSherpaTTSConfig
+	if err := parseProps(config.Props, &cfg); err != nil {
+		return nil, fmt.Errorf("配置解析失败: %v", err)
 	}
-	conn, _, err := dialer.DialContext(context.Background(), config.Cluster, map[string][]string{})
+	if cfg.Cluster == "" {
+		return nil, fmt.Errorf("缺少cluster配置")
+	}
+	base := tts.NewBaseProvider(config, deleteFile)
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+	}
+	conn, _, err := dialer.DialContext(context.Background(), cfg.Cluster, map[string][]string{})
 	if err != nil {
 		return nil, err
 	}
-
 	return &Provider{
 		BaseProvider: base,
 		conn:         conn,
@@ -47,7 +68,7 @@ func (p *Provider) ToTTS(text string) (string, error) {
 	}
 	// Ensure output directory exists
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return "", fmt.Errorf("创建输出目录失败 '%s': %v", outputDir, err)
+		return "", fmt.Errorf("创建输出目录失败04 '%s': %v", outputDir, err)
 	}
 	// Use a unique filename
 	tempFile := filepath.Join(outputDir, fmt.Sprintf("go_sherpa_tts_%d.wav", time.Now().UnixNano()))

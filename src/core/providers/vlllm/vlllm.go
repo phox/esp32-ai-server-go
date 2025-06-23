@@ -91,10 +91,38 @@ type OllamaResponse struct {
 	Done bool `json:"done"`
 }
 
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 // NewProvider 创建新的VLLLM提供者
 func NewProvider(config *Config, logger *utils.Logger) (*Provider, error) {
+	// 解析Props
+	var vlllmConfig VLLLMConfig
+	if err := parseProps(config.Data, &vlllmConfig); err != nil {
+		return nil, fmt.Errorf("VLLLM配置解析失败: %v", err)
+	}
+	// 兜底：如果props未提供type，则用config.Type
+	if vlllmConfig.Type == "" && config.Type != "" {
+		vlllmConfig.Type = config.Type
+	}
+	// 将解析到的配置写回 config 以兼容后续逻辑
+	config.Type = vlllmConfig.Type
+	config.ModelName = vlllmConfig.ModelName
+	config.BaseURL = vlllmConfig.BaseURL
+	config.APIKey = vlllmConfig.APIKey
+	config.Temperature = vlllmConfig.Temperature
+	config.MaxTokens = vlllmConfig.MaxTokens
+	config.TopP = vlllmConfig.TopP
+	config.Security = vlllmConfig.Security
+
 	// 构建VLLLM配置
-	vlllmConfig := &image.VLLLMConfig{
+	vlllmImageConfig := &image.VLLLMConfig{
 		Type:        config.Type,
 		ModelName:   config.ModelName,
 		BaseURL:     config.BaseURL,
@@ -107,7 +135,7 @@ func NewProvider(config *Config, logger *utils.Logger) (*Provider, error) {
 	}
 
 	// 创建图片处理器
-	imageProcessor, err := image.NewImageProcessor(vlllmConfig, logger)
+	imageProcessor, err := image.NewImageProcessor(vlllmImageConfig, logger)
 	if err != nil {
 		return nil, fmt.Errorf("创建图片处理器失败: %v", err)
 	}
@@ -125,6 +153,7 @@ func NewProvider(config *Config, logger *utils.Logger) (*Provider, error) {
 // Initialize 初始化Provider
 func (p *Provider) Initialize() error {
 	// 根据类型初始化对应的客户端
+	fmt.Println("VLLLM Provider初始化", p.config)
 	switch strings.ToLower(p.config.Type) {
 	case "openai":
 		if p.config.APIKey == "" {

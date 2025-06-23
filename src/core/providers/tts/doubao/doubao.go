@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -54,14 +53,44 @@ type Provider struct {
 	baseURL string
 }
 
+// 配置结构体
+type DoubaoTTSConfig struct {
+	BaseURL   string `json:"base_url"`
+	Voice     string `json:"voice"`
+	OutputDir string `json:"output_dir"`
+	AppID     string `json:"appid"`
+	Token     string `json:"token"`
+	Cluster   string `json:"cluster"`
+}
+
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 // NewProvider 创建豆包 TTS 提供者
 func NewProvider(config *tts.Config, deleteFile bool) (*Provider, error) {
+	var cfg DoubaoTTSConfig
+	if err := parseProps(config.Props, &cfg); err != nil {
+		return nil, fmt.Errorf("配置解析失败: %v", err)
+	}
 	base := tts.NewBaseProvider(config, deleteFile)
-	u := url.URL{Scheme: "wss", Host: "openspeech.bytedance.com", Path: "/api/v1/tts/ws_binary"}
-
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "wss://openspeech.bytedance.com/api/v1/tts/ws_binary"
+	}
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = os.TempDir() + "/tmp"
+	}
+	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
+		return nil, fmt.Errorf("创建输出目录失败02: %v", err)
+	}
 	return &Provider{
 		BaseProvider: base,
-		baseURL:      u.String(),
+		baseURL:      cfg.BaseURL,
 	}, nil
 }
 

@@ -10,14 +10,15 @@ import (
 
 // Config TTS配置结构
 type Config struct {
-	Type       string `yaml:"type"`
-	OutputDir  string `yaml:"output_dir"`
-	Voice      string `yaml:"voice,omitempty"`
-	Format     string `yaml:"format,omitempty"`
-	SampleRate int    `yaml:"sample_rate,omitempty"`
-	AppID      string `yaml:"appid"`
-	Token      string `yaml:"token"`
-	Cluster    string `yaml:"cluster"`
+	Type       string                 `yaml:"type"`
+	OutputDir  string                 `yaml:"output_dir"`
+	Voice      string                 `yaml:"voice,omitempty"`
+	Format     string                 `yaml:"format,omitempty"`
+	SampleRate int                    `yaml:"sample_rate,omitempty"`
+	AppID      string                 `yaml:"appid"`
+	Token      string                 `yaml:"token"`
+	Cluster    string                 `yaml:"cluster"`
+	Props      map[string]interface{} `json:"props,omitempty"`
 }
 
 // Provider TTS提供者接口
@@ -51,9 +52,7 @@ func NewBaseProvider(config *Config, deleteFile bool) *BaseProvider {
 
 // Initialize 初始化提供者
 func (p *BaseProvider) Initialize() error {
-	if err := os.MkdirAll(p.config.OutputDir, 0755); err != nil {
-		return fmt.Errorf("创建输出目录失败: %v", err)
-	}
+
 	return nil
 }
 

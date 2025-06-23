@@ -150,7 +150,7 @@ func NewConnectionHandler(
 	ctx context.Context,
 ) *ConnectionHandler {
 	// 初始化数据库服务
-	dbService, err := database.NewDatabase(&config.Database)
+	dbService, err := database.NewDatabase(&config.Database, logger)
 	if err != nil {
 		logger.Error("初始化数据库连接失败: %v", err)
 		// 如果数据库连接失败，继续使用默认配置

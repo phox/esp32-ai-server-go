@@ -1,11 +1,11 @@
-package main
+package pool_test
 
 import (
 	"ai-server-go/src/configs"
 	"ai-server-go/src/core/pool"
 	"ai-server-go/src/core/utils"
 	"fmt"
-	"log"
+	"testing"
 	"time"
 )
 
@@ -54,20 +54,18 @@ func (f *MockFactory) Destroy(resource interface{}) error {
 	return nil
 }
 
-func main() {
+func TestPoolRecycling(t *testing.T) {
 	fmt.Println("🚀 开始测试资源池回收机制...")
 
-	// 创建测试用的logger
 	config := &configs.Config{}
 	config.Log.LogLevel = "debug"
 	config.Log.LogDir = "./logs"
 	config.Log.LogFile = "test.log"
 	logger, err := utils.NewLogger(config)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatalf("logger init failed: %v", err)
 	}
 
-	// 创建资源池
 	factory := &MockFactory{}
 	poolConfig := pool.PoolConfig{
 		MinSize:       2,
@@ -78,7 +76,7 @@ func main() {
 
 	resourcePool, err := pool.NewResourcePool(factory, poolConfig, logger)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatalf("resource pool init failed: %v", err)
 	}
 	defer resourcePool.Close()
 

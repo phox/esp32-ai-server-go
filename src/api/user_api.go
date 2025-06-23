@@ -64,6 +64,7 @@ func (userApi *UserAPI) RegisterRoutes(r gin.IRouter) {
 		users.POST("", userApi.authMiddleware.AdminRequired(), userApi.CreateUser)
 		users.GET("/:id", userApi.GetUser)
 		users.PUT("/:id", userApi.UpdateUser)
+		users.PUT("/:id/profile", userApi.UpdateProfile)
 		users.DELETE("/:id", userApi.authMiddleware.AdminRequired(), userApi.DeleteUser)
 		users.PUT("/:id/password", userApi.UpdatePassword)
 		users.POST("/:id/reset-password", userApi.authMiddleware.AdminRequired(), userApi.ResetPassword)
@@ -77,6 +78,15 @@ func (userApi *UserAPI) RegisterRoutes(r gin.IRouter) {
 		users.GET("/:id/capabilities", userApi.GetUserCapabilities)
 		users.POST("/:id/capabilities", userApi.SetUserCapability)
 		users.DELETE("/:id/capabilities/:capabilityName/:capabilityType", userApi.RemoveUserCapability)
+
+		// Provider绑定API
+		users.POST("/provider/bind", userApi.authMiddleware.AuthRequired(), userApi.BindUserProvider)
+		users.POST("/provider/unbind", userApi.authMiddleware.AuthRequired(), userApi.UnbindUserProvider)
+
+		// 用户Provider绑定相关
+		users.GET("/provider/list", userApi.authMiddleware.AuthRequired(), func(c *gin.Context) {
+			userApi.configService.ListUserProviders(c)
+		})
 	}
 
 	// 设备管理路由
@@ -97,6 +107,10 @@ func (userApi *UserAPI) RegisterRoutes(r gin.IRouter) {
 
 		// 设备AI能力配置（带回退逻辑）
 		devices.GET("/:id/capabilities/with-fallback", userApi.GetDeviceCapabilitiesWithFallback)
+
+		// Provider绑定API
+		devices.POST("/provider/bind", userApi.authMiddleware.AuthRequired(), userApi.BindDeviceProvider)
+		devices.POST("/provider/unbind", userApi.authMiddleware.AuthRequired(), userApi.UnbindDeviceProvider)
 	}
 
 	// AI能力管理路由
@@ -140,6 +154,12 @@ func (userApi *UserAPI) RegisterRoutes(r gin.IRouter) {
 		configs.PUT("/provider/:category/:name/default", userApi.SetDefaultProviderVersion)
 		configs.POST("/provider/:category/:name/refresh", userApi.RefreshGrayscaleConfig)
 	}
+
+	// Provider列表只读接口，普通用户可访问
+	//r.GET("/configs/provider", userApi.authMiddleware.AuthRequired(), userApi.ListProviderConfigs)
+	// 兼容前端Provider绑定列表API
+	r.GET("/user/provider/list", userApi.authMiddleware.AuthRequired(), userApi.configService.ListUserProviders)
+	r.GET("/device/provider/list", userApi.authMiddleware.AuthRequired(), userApi.configService.ListDeviceProviders)
 }
 
 // ListUsers 获取用户列表
@@ -1672,4 +1692,182 @@ func (userApi *UserAPI) RefreshGrayscaleConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "灰度配置刷新成功"})
+}
+
+// UpdateProfile 更新用户个人资料
+func (userApi *UserAPI) UpdateProfile(c *gin.Context) {
+	userID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "无效的用户ID",
+		})
+		return
+	}
+
+	var req database.User
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "请求参数错误",
+		})
+		return
+	}
+
+	// 获取用户信息
+	user, err := userApi.userService.GetUserByID(uint(userID))
+	if err != nil {
+		userApi.logger.Error("获取用户信息失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "获取用户信息失败",
+		})
+		return
+	}
+
+	if user == nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "用户不存在",
+		})
+		return
+	}
+
+	// 更新用户信息
+	if req.Email != "" {
+		user.Email = req.Email
+	}
+	if req.Phone != "" {
+		user.Phone = req.Phone
+	}
+	if req.Nickname != "" {
+		user.Nickname = req.Nickname
+	}
+	if req.Avatar != "" {
+		user.Avatar = req.Avatar
+	}
+
+	err = userApi.userService.UpdateUser(user)
+	if err != nil {
+		userApi.logger.Error("更新用户信息失败: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "更新用户信息失败: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "用户信息更新成功",
+		"data":    user,
+	})
+}
+
+// 用户绑定Provider（仅本人或管理员）
+func (userApi *UserAPI) BindUserProvider(c *gin.Context) {
+	var req struct {
+		UserID     uint   `json:"user_id" binding:"required"`
+		ProviderID uint   `json:"provider_id" binding:"required"`
+		Category   string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	currentUser, exists := c.Get("user")
+	if !exists {
+		c.JSON(401, gin.H{"error": "未登录"})
+		return
+	}
+	user := currentUser.(*database.User)
+	if user.ID != req.UserID && user.Role != "admin" {
+		c.JSON(403, gin.H{"error": "无权限操作他人绑定"})
+		return
+	}
+	userApi.configService.BindUserProvider(c)
+}
+
+// 用户解绑Provider（仅本人或管理员）
+func (userApi *UserAPI) UnbindUserProvider(c *gin.Context) {
+	var req struct {
+		UserID   uint   `json:"user_id" binding:"required"`
+		Category string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	currentUser, exists := c.Get("user")
+	if !exists {
+		c.JSON(401, gin.H{"error": "未登录"})
+		return
+	}
+	user := currentUser.(*database.User)
+	if user.ID != req.UserID && user.Role != "admin" {
+		c.JSON(403, gin.H{"error": "无权限操作他人解绑"})
+		return
+	}
+	userApi.configService.UnbindUserProvider(c)
+}
+
+// 设备绑定Provider（仅设备所有者或管理员）
+func (userApi *UserAPI) BindDeviceProvider(c *gin.Context) {
+	var req struct {
+		DeviceID   uint   `json:"device_id" binding:"required"`
+		ProviderID uint   `json:"provider_id" binding:"required"`
+		Category   string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	currentUser, exists := c.Get("user")
+	if !exists {
+		c.JSON(401, gin.H{"error": "未登录"})
+		return
+	}
+	user := currentUser.(*database.User)
+	// 检查是否为设备所有者或管理员
+	isOwner := false
+	if user.Role == "admin" {
+		isOwner = true
+	} else {
+		ud, err := userApi.userService.GetUserDeviceBinding(user.ID, req.DeviceID)
+		if err == nil && ud != nil && ud.IsOwner {
+			isOwner = true
+		}
+	}
+	if !isOwner {
+		c.JSON(403, gin.H{"error": "无权限操作该设备绑定"})
+		return
+	}
+	userApi.configService.BindDeviceProvider(c)
+}
+
+// 设备解绑Provider（仅设备所有者或管理员）
+func (userApi *UserAPI) UnbindDeviceProvider(c *gin.Context) {
+	var req struct {
+		DeviceID uint   `json:"device_id" binding:"required"`
+		Category string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	currentUser, exists := c.Get("user")
+	if !exists {
+		c.JSON(401, gin.H{"error": "未登录"})
+		return
+	}
+	user := currentUser.(*database.User)
+	// 检查是否为设备所有者或管理员
+	isOwner := false
+	if user.Role == "admin" {
+		isOwner = true
+	} else {
+		ud, err := userApi.userService.GetUserDeviceBinding(user.ID, req.DeviceID)
+		if err == nil && ud != nil && ud.IsOwner {
+			isOwner = true
+		}
+	}
+	if !isOwner {
+		c.JSON(403, gin.H{"error": "无权限操作该设备解绑"})
+		return
+	}
+	userApi.configService.UnbindDeviceProvider(c)
 }

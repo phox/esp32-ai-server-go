@@ -7,6 +7,7 @@ import (
 
 	"ai-server-go/src/core/utils"
 
+	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -266,15 +267,14 @@ func (s *ConfigService) GetProviderVersions(category, name string) ([]*ProviderV
 	var versions []*ProviderVersion
 	for _, config := range configs {
 		version := &ProviderVersion{
-			Category:    config.Category,
-			Name:        config.Name,
-			Version:     config.Version,
-			Weight:      config.Weight,
-			IsActive:    config.IsActive,
-			IsDefault:   config.IsDefault,
-			HealthScore: config.HealthScore,
-			CreatedAt:   config.CreatedAt,
-			UpdatedAt:   config.UpdatedAt,
+			Category:  config.Category,
+			Name:      config.Name,
+			Version:   config.Version,
+			Weight:    config.Weight,
+			IsActive:  config.IsActive,
+			IsDefault: config.IsDefault,
+			CreatedAt: config.CreatedAt,
+			UpdatedAt: config.UpdatedAt,
 		}
 		versions = append(versions, version)
 	}
@@ -297,14 +297,6 @@ func (s *ConfigService) GetDefaultProviderModules() (map[string]string, error) {
 	}
 
 	return modules, nil
-}
-
-// UpdateProviderHealthScore 更新提供商健康评分
-func (s *ConfigService) UpdateProviderHealthScore(id uint, healthScore float64) error {
-	if err := s.db.DB.Model(&ProviderConfig{}).Where("id = ?", id).Update("health_score", healthScore).Error; err != nil {
-		return fmt.Errorf("更新提供商健康评分失败: %v", err)
-	}
-	return nil
 }
 
 // GetProviderConfigByCategoryAndName 根据类别和名称获取提供商配置
@@ -524,130 +516,116 @@ func (s *ConfigService) InitializeDefaultSystemConfigs() error {
 	return nil
 }
 
-// InitializeDefaultProviderConfigs 初始化默认的provider配置
+// InitializeDefaultProviderConfigs 初始化默认的AI提供商配置
 func (s *ConfigService) InitializeDefaultProviderConfigs() error {
-	mustMarshal := func(v interface{}) json.RawMessage {
-		if v == nil {
-			return nil
-		}
-		b, err := json.Marshal(v)
-		if err != nil {
-			s.logger.Error("JSON序列化失败 in InitializeDefaultProviderConfigs", err)
-			panic(err) // 在初始化阶段，序列化失败是严重错误，直接panic
-		}
-		if string(b) == "{}" || string(b) == "null" {
-			return nil
-		}
-		return b
-	}
-
 	defaultProviders := []ProviderConfig{
-		// ASR Providers
-		{ // DoubaoASR (Default)
-			Category: "ASR", Name: "DoubaoASR", Type: "doubao", Version: "v1.0",
-			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
-			AppID: "你的appid", Token: "你的access_token", OutputDir: "tmp/",
-			Extra: mustMarshal(map[string]interface{}{"description": "豆包ASR服务"}),
+		// EdgeTTS (默认)
+		{
+			Category:  "TTS",
+			Name:      "EdgeTTS",
+			Type:      "edge",
+			Version:   "v1",
+			Weight:    100,
+			IsActive:  true,
+			IsDefault: true,
+			Props:     []byte(`{"voice": "zh-CN-XiaoxiaoNeural", "output_dir": "tmp/"}`),
 		},
-		{ // GoSherpaASR
-			Category: "ASR", Name: "GoSherpaASR", Type: "gosherpa", Version: "v1.0",
-			IsDefault: false, IsActive: true, Weight: 50, HealthScore: 100,
-			BaseURL: "ws://127.0.0.1:8848/asr", // Mapped from 'addr'
-			Extra:   mustMarshal(map[string]interface{}{"description": "GoSherpa ASR服务"}),
+		// DoubaoTTS
+		{
+			Category:  "TTS",
+			Name:      "DoubaoTTS",
+			Type:      "doubao",
+			Version:   "v1",
+			Weight:    90,
+			IsActive:  true,
+			IsDefault: false,
+			Props:     []byte(`{"base_url": "https://api.doubao.com/volcengine/v1", "voice": "zh_female_wanwanxiaohe_moon_bigtts", "output_dir": "tmp/", "appid": "你的appid", "token": "你的access_token", "cluster": "你的cluster"}`),
 		},
-
-		// TTS Providers
-		{ // EdgeTTS (Default)
-			Category: "TTS", Name: "EdgeTTS", Type: "edge", Version: "v1.0",
-			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
-			Voice: "zh-CN-XiaoxiaoNeural", OutputDir: "tmp/",
-			Extra: mustMarshal(map[string]interface{}{"description": "微软Edge TTS服务，免费使用"}),
+		// gosherpa-onnx TTS
+		{
+			Category:  "TTS",
+			Name:      "GosherpaTTS",
+			Type:      "gosherpa",
+			Version:   "v1",
+			Weight:    80,
+			IsActive:  true,
+			IsDefault: false,
+			Props:     []byte(`{"cluster": "ws://127.0.0.1:8848/tts", "output_dir": "tmp/"}`),
 		},
-		{ // DoubaoTTS
-			Category: "TTS", Name: "DoubaoTTS", Type: "doubao", Version: "v1.0",
-			IsDefault: false, IsActive: true, Weight: 80, HealthScore: 100,
-			Voice: "zh_female_wanwanxiaohe_moon_bigtts", OutputDir: "tmp/",
-			AppID: "你的appid", Token: "你的access_token", Cluster: "你的cluster",
-			Extra: mustMarshal(map[string]interface{}{"description": "豆包TTS服务"}),
+		// DoubaoASR
+		{
+			Category:  "ASR",
+			Name:      "DoubaoASR",
+			Type:      "doubao",
+			Version:   "v1",
+			Weight:    100,
+			IsActive:  true,
+			IsDefault: true,
+			Props:     []byte(`{"host":"openspeech.bytedance.com","ws_url":"wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream","model_name":"bigmodel","chunk_duration":200,"end_window_size":800,"appid": "你的appid"}`),
 		},
-		{ // GoSherpaTTS
-			Category: "TTS", Name: "GoSherpaTTS", Type: "gosherpa", Version: "v1.0",
-			IsDefault: false, IsActive: true, Weight: 50, HealthScore: 100,
-			BaseURL:   "ws://127.0.0.1:8848/tts", // Mapped from 'cluster'
-			OutputDir: "tmp/",
-			Extra:     mustMarshal(map[string]interface{}{"description": "GoSherpa TTS服务"}),
+		// ChatGLM LLM
+		{
+			Category:  "LLM",
+			Name:      "ChatGLMLLM",
+			Type:      "openai",
+			Version:   "v1",
+			Weight:    100,
+			IsActive:  true,
+			IsDefault: false,
+			Props:     []byte(`{"base_url": "https://open.bigmodel.cn/api/paas/v4/", "api_key": "你的api_key", "model_name": "glm-4-flash"}`),
 		},
-
-		// LLM Providers
-		{ // OllamaLLM (Default)
-			Category: "LLM", Name: "OllamaLLM", Type: "ollama", Version: "v1.0",
-			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
-			ModelName: "qwen3", BaseURL: "http://localhost:11434",
-			Extra: mustMarshal(map[string]interface{}{"description": "Ollama LLM服务,需预先下载模型"}),
+		// Ollama LLM (默认)
+		{
+			Category:  "LLM",
+			Name:      "OllamaLLM",
+			Type:      "ollama",
+			Version:   "v1",
+			Weight:    90,
+			IsActive:  true,
+			IsDefault: true,
+			Props:     []byte(`{"base_url": "http://localhost:11434", "model_name": "qwen3"}`),
 		},
-		{ // ChatGLMLLM
-			Category: "LLM", Name: "ChatGLMLLM", Type: "openai", Version: "v1.0",
-			IsDefault: false, IsActive: true, Weight: 80, HealthScore: 100,
-			ModelName: "glm-4-flash", BaseURL: "https://open.bigmodel.cn/api/paas/v4/",
-			APIKey: "你的api_key",
-			Extra:  mustMarshal(map[string]interface{}{"description": "智谱AI ChatGLM LLM服务"}),
+		// ChatGLM VLLLM (默认)
+		{
+			Category:  "VLLLM",
+			Name:      "ChatGLMVLLM",
+			Type:      "openai",
+			Version:   "v1",
+			Weight:    100,
+			IsActive:  true,
+			IsDefault: true,
+			Props:     []byte(`{"base_url": "https://open.bigmodel.cn/api/paas/v4/", "api_key": "你的api_key", "model_name": "glm-4v-flash", "temperature": 0.7, "max_tokens": 4096, "top_p": 0.9, "security": {"max_file_size": 10485760, "max_pixels": 16777216, "max_width": 4096, "max_height": 4096, "allowed_formats": ["jpeg", "jpg", "png", "webp", "gif"], "enable_deep_scan": true, "validation_timeout": "10s"}}`),
 		},
-
-		// VLLLM Providers
-		{ // ChatGLMVLLM (Default)
-			Category: "VLLLM", Name: "ChatGLMVLLM", Type: "openai", Version: "v1.0",
-			IsDefault: true, IsActive: true, Weight: 100, HealthScore: 100,
-			ModelName: "glm-4v-flash", BaseURL: "https://open.bigmodel.cn/api/paas/v4/",
-			APIKey: "你的api_key", MaxTokens: 4096, Temperature: 0.7, TopP: 0.9,
-			Security: mustMarshal(map[string]interface{}{
-				"max_file_size":      10485760,
-				"max_pixels":         16777216,
-				"max_width":          4096,
-				"max_height":         4096,
-				"allowed_formats":    []string{"jpeg", "jpg", "png", "webp", "gif"},
-				"enable_deep_scan":   true,
-				"validation_timeout": "10s",
-			}),
-			Extra: mustMarshal(map[string]interface{}{"description": "智谱AI ChatGLM VLLLM服务"}),
-		},
-		{ // OllamaVLLM
-			Category: "VLLLM", Name: "OllamaVLLM", Type: "ollama", Version: "v1.0",
-			IsDefault: false, IsActive: true, Weight: 80, HealthScore: 100,
-			ModelName: "qwen2.5vl", BaseURL: "http://localhost:11434",
-			MaxTokens: 4096, Temperature: 0.7, TopP: 0.9,
-			Security: mustMarshal(map[string]interface{}{
-				"max_file_size":      10485760,
-				"max_pixels":         16777216,
-				"max_width":          4096,
-				"max_height":         4096,
-				"allowed_formats":    []string{"jpeg", "jpg", "png", "webp", "gif"},
-				"enable_deep_scan":   true,
-				"validation_timeout": "10s",
-			}),
-			Extra: mustMarshal(map[string]interface{}{"description": "Ollama VLLLM服务"}),
+		// Ollama VLLLM
+		{
+			Category:  "VLLLM",
+			Name:      "OllamaVLLM",
+			Type:      "ollama",
+			Version:   "v1",
+			Weight:    90,
+			IsActive:  true,
+			IsDefault: false,
+			Props:     []byte(`{"base_url": "http://localhost:11434", "model_name": "qwen2.5vl", "temperature": 0.7, "max_tokens": 4096, "top_p": 0.9, "security": {"max_file_size": 10485760, "max_pixels": 16777216, "max_width": 4096, "max_height": 4096, "allowed_formats": ["jpeg", "jpg", "png", "webp", "gif"], "enable_deep_scan": true, "validation_timeout": "10s"}}`),
 		},
 	}
 
 	for _, provider := range defaultProviders {
-		// 检查是否已存在
 		var existing ProviderConfig
-		err := s.db.DB.Where("category = ? AND name = ? AND version = ?",
-			provider.Category, provider.Name, provider.Version).First(&existing).Error
-
-		if err != nil && err != gorm.ErrRecordNotFound {
-			return fmt.Errorf("检查provider配置失败: %v", err)
-		}
-
-		// 如果不存在，则创建默认配置
-		if err == gorm.ErrRecordNotFound {
-			newProvider := provider
-			if err := s.CreateProviderConfig(&newProvider); err != nil {
-				return fmt.Errorf("初始化provider配置 '%s/%s' 失败: %v", provider.Category, provider.Name, err)
+		err := s.db.DB.Where("category = ? AND name = ? AND version = ?", provider.Category, provider.Name, provider.Version).First(&existing).Error
+		if err != nil {
+			if err == gorm.ErrRecordNotFound {
+				if err := s.db.DB.Create(&provider).Error; err != nil {
+					s.logger.Error("创建默认Provider配置失败: %v", err)
+					return err
+				}
+			} else {
+				s.logger.Error("查询默认Provider配置失败: %v", err)
+				return err
 			}
 		}
 	}
 
-	s.logger.Info("默认provider配置初始化完成")
+	s.logger.Info("默认Provider配置初始化完成")
 	return nil
 }
 
@@ -705,40 +683,30 @@ func (s *ConfigService) GetSystemConfigCategory(category string) (map[string]int
 func (s *ConfigService) GetActiveProviderConfigs(category, name string) ([]*ProviderConfig, error) {
 	var configs []*ProviderConfig
 	if err := s.db.DB.Where("category = ? AND name = ? AND is_active = ?", category, name, true).
-		Order("weight DESC, is_default DESC, created_at ASC").
+		Order("version").
 		Find(&configs).Error; err != nil {
-		return nil, fmt.Errorf("查询激活Provider配置失败: %v", err)
+		return nil, fmt.Errorf("查询激活的提供商配置失败: %v", err)
 	}
 	return configs, nil
 }
 
-// UpdateProviderWeight 更新指定Provider的权重
+// UpdateProviderWeight 更新提供商权重
 func (s *ConfigService) UpdateProviderWeight(category, name, version string, weight int) error {
 	if err := s.db.DB.Model(&ProviderConfig{}).
 		Where("category = ? AND name = ? AND version = ?", category, name, version).
 		Update("weight", weight).Error; err != nil {
-		return fmt.Errorf("更新Provider权重失败: %v", err)
+		return fmt.Errorf("更新提供商权重失败: %v", err)
 	}
 	return nil
 }
 
-// UpdateProviderHealthScoreByKey 根据category, name, version更新健康分
-func (s *ConfigService) UpdateProviderHealthScoreByKey(category, name, version string, healthScore float64) error {
-	if err := s.db.DB.Model(&ProviderConfig{}).
-		Where("category = ? AND name = ? AND version = ?", category, name, version).
-		Update("health_score", healthScore).Error; err != nil {
-		return fmt.Errorf("更新Provider健康分失败: %v", err)
-	}
-	return nil
-}
-
-// GetDeviceCapabilityConfigWithFallback 获取设备AI能力配置（带回退逻辑）
-// userID 可为 nil
+// GetDeviceCapabilityConfigWithFallback 获取设备AI能力配置（带回退）
 func (s *ConfigService) GetDeviceCapabilityConfigWithFallback(deviceID uint, userID *uint) (*DeviceCapabilityConfig, error) {
-	var result DeviceCapabilityConfig
-	result.DeviceID = deviceID
-	result.Capabilities = []CapabilityConfig{}
-	result.GlobalConfigs = map[string]string{}
+	deviceConfig := &DeviceCapabilityConfig{
+		DeviceID:      deviceID,
+		Capabilities:  []CapabilityConfig{},
+		GlobalConfigs: make(map[string]string),
+	}
 
 	// 1. 设备专属能力
 	var deviceCaps []DeviceCapability
@@ -746,95 +714,83 @@ func (s *ConfigService) GetDeviceCapabilityConfigWithFallback(deviceID uint, use
 	if err != nil {
 		return nil, err
 	}
-	used := map[string]bool{}
+	used := make(map[string]bool)
 	for _, dc := range deviceCaps {
-		if dc.Capability.ID == 0 || !dc.IsEnabled {
+		if dc.Capability.CapabilityName == "" {
 			continue
 		}
-		var config map[string]interface{}
-		_ = json.Unmarshal(dc.ConfigData, &config)
 		cc := CapabilityConfig{
 			CapabilityName: dc.Capability.CapabilityName,
 			CapabilityType: dc.Capability.CapabilityType,
-			Config:         config,
 			Priority:       dc.Priority,
 			IsEnabled:      dc.IsEnabled,
 		}
-		// 标记优先级来源
-		if cc.Config == nil {
-			cc.Config = map[string]interface{}{}
+		if err := json.Unmarshal(dc.ConfigData, &cc.Config); err != nil {
+			s.logger.Warn("解析设备能力配置失败: %v", err)
+			cc.Config = make(map[string]interface{})
 		}
 		cc.Config["priority_source"] = "device"
-		result.Capabilities = append(result.Capabilities, cc)
+		deviceConfig.Capabilities = append(deviceConfig.Capabilities, cc)
 		used[cc.CapabilityName+"/"+cc.CapabilityType] = true
 	}
 
-	// 2. 用户自定义能力
+	// 2. 用户能力（如果提供了userID）
 	if userID != nil {
 		var userCaps []UserCapability
-		err = s.db.DB.Where("user_id = ? AND is_active = ?", *userID, true).Preload("Capability").Find(&userCaps).Error
-		if err != nil {
-			return nil, err
-		}
-		for _, uc := range userCaps {
-			if uc.Capability.ID == 0 {
-				continue
+		err := s.db.DB.Where("user_id = ? AND is_active = ?", *userID, true).Preload("Capability").Find(&userCaps).Error
+		if err == nil {
+			for _, uc := range userCaps {
+				key := uc.Capability.CapabilityName + "/" + uc.Capability.CapabilityType
+				if _, ok := used[key]; ok {
+					continue
+				}
+				cc := CapabilityConfig{
+					CapabilityName: uc.Capability.CapabilityName,
+					CapabilityType: uc.Capability.CapabilityType,
+					IsEnabled:      uc.IsActive,
+				}
+				if err := json.Unmarshal(uc.ConfigData, &cc.Config); err != nil {
+					s.logger.Warn("解析用户能力配置失败: %v", err)
+					cc.Config = make(map[string]interface{})
+				}
+				cc.Config["priority_source"] = "user"
+				deviceConfig.Capabilities = append(deviceConfig.Capabilities, cc)
+				used[key] = true
 			}
-			key := uc.Capability.CapabilityName + "/" + uc.Capability.CapabilityType
-			if used[key] {
-				continue
-			}
-			var config map[string]interface{}
-			_ = json.Unmarshal(uc.ConfigData, &config)
-			cc := CapabilityConfig{
-				CapabilityName: uc.Capability.CapabilityName,
-				CapabilityType: uc.Capability.CapabilityType,
-				Config:         config,
-				Priority:       100, // user优先级
-				IsEnabled:      true,
-			}
-			if cc.Config == nil {
-				cc.Config = map[string]interface{}{}
-			}
-			cc.Config["priority_source"] = "user"
-			result.Capabilities = append(result.Capabilities, cc)
-			used[key] = true
 		}
 	}
 
 	// 3. 系统默认能力
-	var sysCaps []AICapability
-	err = s.db.DB.Where("is_global = ? AND is_active = ?", true, true).Find(&sysCaps).Error
-	if err != nil {
-		return nil, err
-	}
-	for _, sc := range sysCaps {
-		key := sc.CapabilityName + "/" + sc.CapabilityType
-		if used[key] {
+	defaultCaps, _ := s.GetDefaultCapabilities()
+	for _, dc := range defaultCaps {
+		key := dc.CapabilityName + "/" + dc.CapabilityType
+		if _, ok := used[key]; ok {
 			continue
 		}
 		cc := CapabilityConfig{
-			CapabilityName: sc.CapabilityName,
-			CapabilityType: sc.CapabilityType,
-			Config:         map[string]interface{}{},
-			Priority:       200, // system优先级
+			CapabilityName: dc.CapabilityName,
+			CapabilityType: dc.CapabilityType,
 			IsEnabled:      true,
 		}
+		if err := json.Unmarshal(dc.ConfigSchema, &cc.Config); err != nil {
+			s.logger.Warn("解析系统默认能力配置失败: %v", err)
+			cc.Config = make(map[string]interface{})
+		}
 		cc.Config["priority_source"] = "system"
-		result.Capabilities = append(result.Capabilities, cc)
+		deviceConfig.Capabilities = append(deviceConfig.Capabilities, cc)
 		used[key] = true
 	}
 
 	// 4. 全局配置
 	globalConfigs, _ := s.ListGlobalConfigs()
 	for _, gc := range globalConfigs {
-		result.GlobalConfigs[gc.ConfigKey] = gc.ConfigValue
+		deviceConfig.GlobalConfigs[gc.ConfigKey] = gc.ConfigValue
 	}
 
-	return &result, nil
+	return deviceConfig, nil
 }
 
-// GetDefaultCapabilities 获取默认AI能力列表
+// GetDefaultCapabilities 获取默认的AI能力
 func (s *ConfigService) GetDefaultCapabilities() ([]*AICapability, error) {
 	var defaults []*AICapability
 	if err := s.db.DB.Where("is_global = ? AND is_active = ?", true, true).Find(&defaults).Error; err != nil {
@@ -844,4 +800,164 @@ func (s *ConfigService) GetDefaultCapabilities() ([]*AICapability, error) {
 		defaults = []*AICapability{}
 	}
 	return defaults, nil
+}
+
+// GetEffectiveProvider 获取设备/用户/系统默认 Provider
+func (s *ConfigService) GetEffectiveProvider(category string, deviceID *uint, userID *uint) (*ProviderConfig, error) {
+	// 1. 设备专属
+	if deviceID != nil {
+		var dp DeviceProvider
+		if err := s.db.DB.Where("device_id = ? AND category = ? AND is_active = ?", *deviceID, category, true).First(&dp).Error; err == nil {
+			var provider ProviderConfig
+			if err := s.db.DB.First(&provider, dp.ProviderID).Error; err == nil {
+				return &provider, nil
+			}
+		}
+	}
+	// 2. 用户自定义
+	if userID != nil {
+		var up UserProvider
+		if err := s.db.DB.Where("user_id = ? AND category = ? AND is_active = ?", *userID, category, true).First(&up).Error; err == nil {
+			var provider ProviderConfig
+			if err := s.db.DB.First(&provider, up.ProviderID).Error; err == nil {
+				return &provider, nil
+			}
+		}
+	}
+	// 3. 系统默认
+	return s.GetDefaultProviderConfig(category)
+}
+
+// 用户绑定Provider
+// POST /api/user/provider/bind
+func (s *ConfigService) BindUserProvider(c *gin.Context) {
+	var req struct {
+		UserID     uint   `json:"user_id" binding:"required"`
+		ProviderID uint   `json:"provider_id" binding:"required"`
+		Category   string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	var up UserProvider
+	db := s.db.DB
+	if err := db.Where("user_id = ? AND category = ?", req.UserID, req.Category).
+		Assign(UserProvider{
+			ProviderID: req.ProviderID,
+			IsActive:   true,
+		}).
+		FirstOrCreate(&up).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true})
+}
+
+// 设备绑定Provider
+// POST /api/device/provider/bind
+func (s *ConfigService) BindDeviceProvider(c *gin.Context) {
+	var req struct {
+		DeviceID   uint   `json:"device_id" binding:"required"`
+		ProviderID uint   `json:"provider_id" binding:"required"`
+		Category   string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	var dp DeviceProvider
+	db := s.db.DB
+	if err := db.Where("device_id = ? AND category = ?", req.DeviceID, req.Category).
+		Assign(DeviceProvider{
+			ProviderID: req.ProviderID,
+			IsActive:   true,
+		}).
+		FirstOrCreate(&dp).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true})
+}
+
+// 查询用户绑定Provider
+// GET /api/user/provider/list?user_id=123
+func (s *ConfigService) ListUserProviders(c *gin.Context) {
+	userID := c.Query("user_id")
+	var providers []UserProvider
+	if err := s.db.DB.Where("user_id = ? AND is_active = ?", userID, true).Find(&providers).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, providers)
+}
+
+// 查询设备绑定Provider
+// GET /api/device/provider/list?device_id=456
+func (s *ConfigService) ListDeviceProviders(c *gin.Context) {
+	deviceID := c.Query("device_id")
+	var providers []DeviceProvider
+	if err := s.db.DB.Where("device_id = ? AND is_active = ?", deviceID, true).Find(&providers).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, providers)
+}
+
+// 解绑用户Provider
+// POST /api/user/provider/unbind
+func (s *ConfigService) UnbindUserProvider(c *gin.Context) {
+	var req struct {
+		UserID   uint   `json:"user_id" binding:"required"`
+		Category string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.db.DB.Model(&UserProvider{}).
+		Where("user_id = ? AND category = ?", req.UserID, req.Category).
+		Update("is_active", false).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true})
+}
+
+// 解绑设备Provider
+// POST /api/device/provider/unbind
+func (s *ConfigService) UnbindDeviceProvider(c *gin.Context) {
+	var req struct {
+		DeviceID uint   `json:"device_id" binding:"required"`
+		Category string `json:"category" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if err := s.db.DB.Model(&DeviceProvider{}).
+		Where("device_id = ? AND category = ?", req.DeviceID, req.Category).
+		Update("is_active", false).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"success": true})
+}
+
+// Provider列表API
+// GET /api/provider/list?category=TTS
+func (s *ConfigService) ListProviders(c *gin.Context) {
+	category := c.Query("category")
+	var providers []ProviderConfig
+	db := s.db.DB
+	if category != "" {
+		db = db.Where("category = ? AND is_active = ?", category, true)
+	} else {
+		db = db.Where("is_active = ?", true)
+	}
+	if err := db.Order("category, name, version").Find(&providers).Error; err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, providers)
 }

@@ -3,15 +3,17 @@ package database
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"ai-server-go/src/configs"
+	"ai-server-go/src/core/utils"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 // Database 数据库管理器
@@ -20,13 +22,18 @@ type Database struct {
 }
 
 // NewDatabase 创建数据库连接
-func NewDatabase(config *configs.DatabaseConfig) (*Database, error) {
+func NewDatabase(config *configs.DatabaseConfig, logger *utils.Logger) (*Database, error) {
 	var db *gorm.DB
 	var err error
 
 	// 配置GORM日志
 	gormConfig := &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: gormlogger.New(
+			log.New(os.Stdout, "\r\n", log.LstdFlags), // 使用标准库的log
+			gormlogger.Config{
+				LogLevel: gormlogger.Info, // 设置日志级别
+			},
+		),
 	}
 
 	// 根据数据库类型创建连接
@@ -91,7 +98,13 @@ func NewDatabase(config *configs.DatabaseConfig) (*Database, error) {
 
 	log.Printf("数据库连接成功: %s", config.Type)
 
-	return &Database{DB: db}, nil
+	// 自动迁移（自动建表）
+	dbObj := &Database{DB: db}
+	if err := dbObj.AutoMigrate(); err != nil {
+		return nil, fmt.Errorf("数据库自动迁移失败: %v", err)
+	}
+
+	return dbObj, nil
 }
 
 // AutoMigrate 自动迁移数据库表结构
@@ -113,6 +126,8 @@ func (d *Database) AutoMigrate() error {
 		&Session{},
 		&UsageStats{},
 		&ProviderConfig{},
+		&UserProvider{},
+		&DeviceProvider{},
 	}
 
 	// 执行自动迁移

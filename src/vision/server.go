@@ -20,6 +20,7 @@ import (
 	"ai-server-go/src/database"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mitchellh/mapstructure"
 )
 
 const (
@@ -78,20 +79,25 @@ func (s *DefaultVisionService) initVLLMProviders() error {
 		}
 
 		// 创建VLLLM provider配置
-		var security vlllm.SecurityConfig
-		if vlllmConfig.Security != nil {
-			securityBytes, _ := json.Marshal(vlllmConfig.Security)
-			_ = json.Unmarshal(securityBytes, &security)
+		var props map[string]interface{}
+		if err := json.Unmarshal(vlllmConfig.Props, &props); err != nil {
+			s.logger.Error("解析VLLLM Props失败: %v", err)
+			continue
+		}
+		var vlllmProps vlllm.VLLLMConfig
+		if err := mapstructure.Decode(props, &vlllmProps); err != nil {
+			s.logger.Error("VLLLM Props转结构体失败: %v", err)
+			continue
 		}
 		providerConfig := &vlllm.Config{
 			Type:        vlllmConfig.Type,
-			ModelName:   vlllmConfig.ModelName,
-			BaseURL:     vlllmConfig.BaseURL,
-			APIKey:      vlllmConfig.APIKey,
-			Temperature: vlllmConfig.Temperature,
-			MaxTokens:   vlllmConfig.MaxTokens,
-			TopP:        vlllmConfig.TopP,
-			Security:    security,
+			ModelName:   vlllmProps.ModelName,
+			BaseURL:     vlllmProps.BaseURL,
+			APIKey:      vlllmProps.APIKey,
+			Temperature: vlllmProps.Temperature,
+			MaxTokens:   vlllmProps.MaxTokens,
+			TopP:        vlllmProps.TopP,
+			Security:    vlllmProps.Security,
 		}
 
 		// 创建provider实例

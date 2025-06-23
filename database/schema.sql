@@ -306,3 +306,27 @@ CREATE TABLE IF NOT EXISTS provider_configs (
     INDEX idx_is_active (is_active),
     INDEX idx_is_default (is_default)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI Provider配置表（支持灰度发布）'; 
+
+-- 用户-Provider绑定表
+CREATE TABLE IF NOT EXISTS user_provider (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL,
+    provider_id BIGINT NOT NULL,
+    category VARCHAR(20) NOT NULL, -- 如 TTS/ASR/LLM/VLLLM
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_user_category (user_id, category)
+);
+
+-- 设备-Provider绑定表
+CREATE TABLE IF NOT EXISTS device_provider (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    device_id BIGINT NOT NULL,
+    provider_id BIGINT NOT NULL,
+    category VARCHAR(20) NOT NULL, -- 如 TTS/ASR/LLM/VLLLM
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_device_category (device_id, category)
+);

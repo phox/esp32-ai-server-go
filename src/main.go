@@ -174,12 +174,6 @@ func StartHttpServer(config *configs.Config, logger *utils.Logger, g *errgroup.G
 	}
 	logger.Info("=== 路由注册完成 ===")
 
-	// 初始化默认provider配置
-	if err := configService.InitializeDefaultProviderConfigs(); err != nil {
-		logger.Error("初始化默认provider配置失败: %v", err)
-		return nil, err
-	}
-
 	// 检查是否存在管理员账号，不存在则创建
 	logger.Info("检查是否存在管理员账号，不存在则创建")
 	adminUser, err := userService.GetUserByUsername("admin")
@@ -258,38 +252,6 @@ func GracefulShutdown(cancel context.CancelFunc, logger *utils.Logger, g *errgro
 	}
 }
 
-func startServices(config *configs.Config, logger *utils.Logger, g *errgroup.Group, groupCtx context.Context, db *database.Database) error {
-
-	// 初始化配置服务
-	configService := database.NewConfigService(db, logger)
-
-	// 初始化默认配置
-	if err := configService.InitializeDefaultSystemConfigs(); err != nil {
-		logger.Error("初始化默认系统配置失败: %v", err)
-		return err
-	}
-
-	// 初始化默认provider配置
-	if err := configService.InitializeDefaultProviderConfigs(); err != nil {
-		logger.Error("初始化默认provider配置失败: %v", err)
-		return err
-	}
-
-	// 启动WebSocket服务
-	_, err := StartWSServer(config, logger, g, groupCtx, configService)
-	if err != nil {
-		return err
-	}
-
-	// 启动HTTP服务
-	_, err = StartHttpServer(config, logger, g, groupCtx, configService, db)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func main() {
 	// 加载配置和日志
 	config, logger,
@@ -303,7 +265,7 @@ func main() {
 	logger.Info("AI服务器启动中...")
 
 	// 初始化数据库连接
-	db, err := database.NewDatabase(&config.Database)
+	db, err := database.NewDatabase(&config.Database, logger)
 	if err != nil {
 		logger.Error("数据库连接失败: %v", err)
 		os.Exit(1)
@@ -314,8 +276,29 @@ func main() {
 	g, groupCtx := errgroup.WithContext(context.Background())
 	ctx, cancel := context.WithCancel(groupCtx)
 
-	// 启动所有服务
-	if err := startServices(config, logger, g, ctx, db); err != nil {
+	// 初始化配置服务
+	configService := database.NewConfigService(db, logger)
+	// 初始化默认系统配置
+	if err := configService.InitializeDefaultSystemConfigs(); err != nil {
+		logger.Error("初始化默认系统配置失败: %v", err)
+		os.Exit(1)
+	}
+	// 初始化默认provider配置
+	if err := configService.InitializeDefaultProviderConfigs(); err != nil {
+		logger.Error("初始化默认provider配置失败: %v", err)
+		os.Exit(1)
+	}
+
+	// 启动WebSocket服务
+	_, err = StartWSServer(config, logger, g, ctx, configService)
+	if err != nil {
+		logger.Error("启动WebSocket服务失败", err)
+		os.Exit(1)
+	}
+
+	// 启动HTTP服务（内部完成所有服务注册和初始化）
+	_, err = StartHttpServer(config, logger, g, ctx, configService, db)
+	if err != nil {
 		logger.Error("启动服务失败", err)
 		os.Exit(1)
 	}

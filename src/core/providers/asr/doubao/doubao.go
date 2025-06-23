@@ -50,6 +50,30 @@ const (
 // Ensure Provider implements asr.Provider interface
 var _ asr.Provider = (*Provider)(nil)
 
+// 配置结构体
+type DoubaoASRConfig struct {
+	AppID         string `json:"appid"`
+	AccessToken   string `json:"access_token"`
+	OutputDir     string `json:"output_dir"`
+	Host          string `json:"host"`
+	WSURL         string `json:"ws_url"`
+	ModelName     string `json:"model_name"`
+	ChunkDuration int    `json:"chunk_duration"`
+	EndWindowSize int    `json:"end_window_size"`
+	EnablePunc    bool   `json:"enable_punc"`
+	EnableITN     bool   `json:"enable_itn"`
+	EnableDDC     bool   `json:"enable_ddc"`
+}
+
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 // Provider 豆包ASR提供者实现
 type Provider struct {
 	*asr.BaseProvider
@@ -82,53 +106,62 @@ type Provider struct {
 
 // NewProvider 创建豆包ASR提供者实例
 func NewProvider(config *asr.Config, deleteFile bool, logger *utils.Logger) (*Provider, error) {
-	base := asr.NewBaseProvider(config, deleteFile)
-
-	// 从config.Data中获取配置
-	appID, ok := config.Data["appid"].(string)
-	if !ok {
-		return nil, fmt.Errorf("缺少appid配置")
+	var cfg DoubaoASRConfig
+	if err := parseProps(config.Data, &cfg); err != nil {
+		return nil, fmt.Errorf("配置解析失败: %v", err)
 	}
 
-	accessToken, ok := config.Data["access_token"].(string)
-	if !ok {
-		return nil, fmt.Errorf("缺少access_token配置")
-	}
+	if cfg.AppID == "" {
+		cfg.AppID = "1234567890"
+		fmt.Println("缺少appid配置: %v", config.Data)
 
-	// 确保输出目录存在
-	outputDir, _ := config.Data["output_dir"].(string)
-	if outputDir == "" {
-		outputDir = "tmp/"
+		//return nil, fmt.Errorf("缺少appid配置: %v", config.Data)
 	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if cfg.AccessToken == "" {
+		cfg.AccessToken = "1234567890"
+		fmt.Println("缺少access_token配置: %v", config.Data)
+		//return nil, fmt.Errorf("缺少access_token配置")
+	}
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = os.TempDir() + "/tmp"
+	}
+	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
 		return nil, fmt.Errorf("创建输出目录失败: %v", err)
 	}
-
-	// 创建连接ID
-	connectID := fmt.Sprintf("%d", time.Now().UnixNano())
-
-	provider := &Provider{
-		BaseProvider:  base,
-		appID:         appID,
-		accessToken:   accessToken,
-		outputDir:     outputDir,
-		host:          "openspeech.bytedance.com",
-		wsURL:         "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
-		chunkDuration: 200, // 固定使用200ms分片
-		connectID:     connectID,
-		logger:        logger, // 使用简单的logger
-
-		// 默认配置
-		modelName:     "bigmodel",
-		endWindowSize: 800,
-		enablePunc:    true,
-		enableITN:     true,
-		enableDDC:     false,
+	if cfg.Host == "" {
+		cfg.Host = "openspeech.bytedance.com"
+	}
+	if cfg.WSURL == "" {
+		cfg.WSURL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream"
+	}
+	if cfg.ModelName == "" {
+		cfg.ModelName = "bigmodel"
+	}
+	if cfg.ChunkDuration == 0 {
+		cfg.ChunkDuration = 200
+	}
+	if cfg.EndWindowSize == 0 {
+		cfg.EndWindowSize = 800
 	}
 
-	// 初始化音频处理
-	provider.InitAudioProcessing()
+	provider := &Provider{
+		BaseProvider:  asr.NewBaseProvider(config, deleteFile),
+		appID:         cfg.AppID,
+		accessToken:   cfg.AccessToken,
+		outputDir:     cfg.OutputDir,
+		host:          cfg.Host,
+		wsURL:         cfg.WSURL,
+		chunkDuration: cfg.ChunkDuration,
+		connectID:     fmt.Sprintf("%d", time.Now().UnixNano()),
+		logger:        logger,
+		modelName:     cfg.ModelName,
+		endWindowSize: cfg.EndWindowSize,
+		enablePunc:    cfg.EnablePunc,
+		enableITN:     cfg.EnableITN,
+		enableDDC:     cfg.EnableDDC,
+	}
 
+	provider.InitAudioProcessing()
 	return provider, nil
 }
 

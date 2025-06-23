@@ -29,12 +29,11 @@ type GrayscaleConfig struct {
 
 // GrayscaleVersion 灰度版本信息
 type GrayscaleVersion struct {
-	Version     string                   `json:"version"`
-	Weight      int                      `json:"weight"`
-	IsActive    bool                     `json:"is_active"`
-	IsDefault   bool                     `json:"is_default"`
-	HealthScore float64                  `json:"health_score"`
-	Config      *database.ProviderConfig `json:"config"`
+	Version   string                   `json:"version"`
+	Weight    int                      `json:"weight"`
+	IsActive  bool                     `json:"is_active"`
+	IsDefault bool                     `json:"is_default"`
+	Config    *database.ProviderConfig `json:"config"`
 }
 
 // NewGrayscaleManager 创建灰度发布管理器
@@ -132,17 +131,12 @@ func (gm *GrayscaleManager) selectByHealth(config *GrayscaleConfig) *GrayscaleVe
 	config.mu.RLock()
 	defer config.mu.RUnlock()
 
-	var bestVersion *GrayscaleVersion
-	bestScore := -1.0
-
 	for _, version := range config.Versions {
-		if version.IsActive && version.HealthScore > bestScore {
-			bestScore = version.HealthScore
-			bestVersion = version
+		if version.IsActive {
+			return version
 		}
 	}
-
-	return bestVersion
+	return nil
 }
 
 // selectByRoundRobin 轮询选择版本
@@ -176,18 +170,17 @@ func (gm *GrayscaleManager) loadGrayscaleConfig(category, name string) error {
 	grayscaleConfig := &GrayscaleConfig{
 		Category: category,
 		Name:     name,
-		Strategy: "weight", // 默认使用权重策略
+		Strategy: "weight",
 		Versions: make([]*GrayscaleVersion, 0),
 	}
 
 	for _, config := range configs {
 		version := &GrayscaleVersion{
-			Version:     config.Version,
-			Weight:      config.Weight,
-			IsActive:    config.IsActive,
-			IsDefault:   config.IsDefault,
-			HealthScore: config.HealthScore,
-			Config:      config,
+			Version:   config.Version,
+			Weight:    config.Weight,
+			IsActive:  config.IsActive,
+			IsDefault: config.IsDefault,
+			Config:    config,
 		}
 		grayscaleConfig.Versions = append(grayscaleConfig.Versions, version)
 	}
@@ -221,12 +214,7 @@ func (gm *GrayscaleManager) UpdateWeight(category, name, version string, weight 
 
 // UpdateHealthScore 更新健康评分
 func (gm *GrayscaleManager) UpdateHealthScore(category, name, version string, healthScore float64) error {
-	err := gm.configService.UpdateProviderHealthScoreByKey(category, name, version, healthScore)
-	if err != nil {
-		return err
-	}
-
-	// 刷新缓存
+	// 仅刷新缓存，不再有健康分持久化
 	return gm.RefreshConfig(category, name)
 }
 
@@ -252,23 +240,17 @@ func (gm *GrayscaleManager) performHealthCheck() {
 	for _, config := range configs {
 		for _, version := range config.Versions {
 			if version.IsActive {
-				// 这里可以调用实际的健康检查逻辑
-				// 暂时使用模拟的健康评分
-				healthScore := gm.simulateHealthCheck(version.Config)
-				if healthScore != version.HealthScore {
-					_ = gm.UpdateHealthScore(config.Category, config.Name, version.Version, healthScore)
-				}
+				_ = gm.simulateHealthCheck(version.Config)
 			}
 		}
 	}
 }
 
-// simulateHealthCheck 模拟健康检查（实际项目中应该调用真实的健康检查）
+// simulateHealthCheck 模拟健康检查（实际项目中应调用真实的健康检查）
 func (gm *GrayscaleManager) simulateHealthCheck(config *database.ProviderConfig) float64 {
-	// 这里应该实现真实的健康检查逻辑
-	// 暂时返回一个随机值作为示例
-	rand.Seed(time.Now().UnixNano())
-	return 80 + rand.Float64()*20 // 80-100之间的随机值
+	// 这里应实现真实的健康检查逻辑
+	// 暂时返回一个固定值
+	return 100
 }
 
 // GetGrayscaleStatus 获取灰度发布状态

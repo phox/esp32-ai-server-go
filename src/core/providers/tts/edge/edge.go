@@ -2,6 +2,7 @@ package edge
 
 import (
 	"ai-server-go/src/core/providers/tts"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,9 +16,34 @@ type Provider struct {
 	*tts.BaseProvider
 }
 
+// 配置结构体
+type EdgeTTSConfig struct {
+	Voice     string `json:"voice"`
+	OutputDir string `json:"output_dir"`
+}
+
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 // NewProvider 创建Edge TTS提供者
 func NewProvider(config *tts.Config, deleteFile bool) (*Provider, error) {
+	var cfg EdgeTTSConfig
+	if err := parseProps(config.Props, &cfg); err != nil {
+		return nil, fmt.Errorf("配置解析失败: %v", err)
+	}
 	base := tts.NewBaseProvider(config, deleteFile)
+	if cfg.OutputDir == "" {
+		cfg.OutputDir = os.TempDir()
+	}
+	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
+		return nil, fmt.Errorf("创建输出目录失败 '%s': %v", cfg.OutputDir, err)
+	}
 	return &Provider{
 		BaseProvider: base,
 	}, nil
@@ -40,7 +66,7 @@ func (p *Provider) ToTTS(text string) (string, error) {
 	}
 	// Ensure output directory exists
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return "", fmt.Errorf("创建输出目录失败 '%s': %v", outputDir, err)
+		return "", fmt.Errorf("创建输出目录失败03 '%s': %v", outputDir, err)
 	}
 	// Use a unique filename
 	tempFile := filepath.Join(outputDir, fmt.Sprintf("edge_tts_go_%d.mp3", time.Now().UnixNano()))

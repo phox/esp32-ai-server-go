@@ -32,7 +32,21 @@ type ProviderFactory struct {
 }
 
 func (f *ProviderFactory) Create() (interface{}, error) {
-	return f.createProvider()
+	// provider初始化前输出配置
+	if f.logger != nil {
+		configJson, _ := json.MarshalIndent(f.config, "", "  ")
+		f.logger.Debug("[ProviderFactory] 初始化provider，类型: %s，配置: %s", f.providerType, string(configJson))
+	}
+	provider, err := f.createProvider()
+	// provider初始化后输出结果
+	if f.logger != nil {
+		if err != nil {
+			f.logger.Error("[ProviderFactory] provider初始化失败，类型: %s，err: %v", f.providerType, err)
+		} else {
+			f.logger.Debug("[ProviderFactory] provider初始化成功，类型: %s", f.providerType)
+		}
+	}
+	return provider, err
 }
 
 func (f *ProviderFactory) Destroy(resource interface{}) error {
@@ -111,13 +125,6 @@ func NewASRFactory(asrType string, configService *database.ConfigService, logger
 		providerType: "asr",
 		config: &asr.Config{
 			Type: providerConfig.Type,
-			Data: map[string]interface{}{
-				"type":         providerConfig.Type,
-				"appid":        providerConfig.AppID,
-				"access_token": providerConfig.Token,
-				"output_dir":   providerConfig.OutputDir,
-				"addr":         providerConfig.Cluster,
-			},
 		},
 		logger: logger,
 		params: map[string]interface{}{
@@ -130,7 +137,6 @@ func NewASRFactory(asrType string, configService *database.ConfigService, logger
 }
 
 func NewLLMFactory(llmType string, configService *database.ConfigService, logger *utils.Logger, grayscaleManager *GrayscaleManager) ResourceFactory {
-	// 从灰度管理器获取LLM配置
 	var providerConfig *database.ProviderConfig
 	var err error
 
@@ -145,24 +151,22 @@ func NewLLMFactory(llmType string, configService *database.ConfigService, logger
 		return nil
 	}
 
-	var extra map[string]interface{}
-	if len(providerConfig.Extra) > 0 {
-		if err := json.Unmarshal(providerConfig.Extra, &extra); err != nil {
-			logger.Error("解析LLM extra配置失败: %v", err)
+	var props map[string]interface{}
+	if len(providerConfig.Props) > 0 {
+		err := json.Unmarshal(providerConfig.Props, &props)
+		if err != nil {
+			logger.Error("解析LLM Props失败: %v", err)
+			props = map[string]interface{}{}
 		}
+	} else {
+		props = map[string]interface{}{}
 	}
 
 	return &ProviderFactory{
 		providerType: "llm",
 		config: &llm.Config{
-			Type:        providerConfig.Type,
-			ModelName:   providerConfig.ModelName,
-			BaseURL:     providerConfig.BaseURL,
-			APIKey:      providerConfig.APIKey,
-			Temperature: providerConfig.Temperature,
-			MaxTokens:   providerConfig.MaxTokens,
-			TopP:        providerConfig.TopP,
-			Extra:       extra,
+			Type:  providerConfig.Type,
+			Extra: props,
 		},
 		logger:           logger,
 		configService:    configService,
@@ -186,16 +190,23 @@ func NewTTSFactory(ttsType string, configService *database.ConfigService, logger
 		return nil
 	}
 
+	// 反序列化Props
+	var props map[string]interface{}
+	if len(providerConfig.Props) > 0 {
+		err := json.Unmarshal(providerConfig.Props, &props)
+		if err != nil {
+			logger.Error("解析TTS Props失败: %v", err)
+			props = map[string]interface{}{}
+		}
+	} else {
+		props = map[string]interface{}{}
+	}
+
 	return &ProviderFactory{
 		providerType: "tts",
 		config: &tts.Config{
-			Type:      providerConfig.Type,
-			Voice:     providerConfig.Voice,
-			Format:    providerConfig.Format,
-			OutputDir: providerConfig.OutputDir,
-			AppID:     providerConfig.AppID,
-			Token:     providerConfig.Token,
-			Cluster:   providerConfig.Cluster,
+			Type:  providerConfig.Type,
+			Props: props,
 		},
 		logger: logger,
 		params: map[string]interface{}{
@@ -208,7 +219,6 @@ func NewTTSFactory(ttsType string, configService *database.ConfigService, logger
 }
 
 func NewVLLLMFactory(vlllmType string, configService *database.ConfigService, logger *utils.Logger, grayscaleManager *GrayscaleManager) ResourceFactory {
-	// 从灰度管理器获取VLLLM配置
 	var providerConfig *database.ProviderConfig
 	var err error
 
@@ -223,34 +233,28 @@ func NewVLLLMFactory(vlllmType string, configService *database.ConfigService, lo
 		return nil
 	}
 
-	// 转换Security配置
-	var security vlllm.SecurityConfig
-	if len(providerConfig.Security) > 0 {
-		if err := json.Unmarshal(providerConfig.Security, &security); err != nil {
-			logger.Error("解析VLLLM security配置失败: %v", err)
+	var props map[string]interface{}
+	if len(providerConfig.Props) > 0 {
+		err := json.Unmarshal(providerConfig.Props, &props)
+		if err != nil {
+			logger.Error("解析VLLLM Props失败: %v", err)
+			props = map[string]interface{}{}
 		}
+	} else {
+		props = map[string]interface{}{}
 	}
 
-	// 转换Extra配置
-	var extra map[string]interface{}
-	if len(providerConfig.Extra) > 0 {
-		if err := json.Unmarshal(providerConfig.Extra, &extra); err != nil {
-			logger.Error("解析VLLLM extra配置失败: %v", err)
-		}
+	// 补充type字段
+	if _, ok := props["type"]; !ok || props["type"] == "" {
+		props["type"] = providerConfig.Type
 	}
+	typeVal, _ := props["type"].(string)
 
 	return &ProviderFactory{
 		providerType: "vlllm",
 		config: &vlllm.VLLLMConfig{
-			Type:        providerConfig.Type,
-			ModelName:   providerConfig.ModelName,
-			BaseURL:     providerConfig.BaseURL,
-			APIKey:      providerConfig.APIKey,
-			Temperature: providerConfig.Temperature,
-			MaxTokens:   providerConfig.MaxTokens,
-			TopP:        providerConfig.TopP,
-			Security:    security,
-			Extra:       extra,
+			Type:  typeVal,
+			Extra: props,
 		},
 		logger:           logger,
 		configService:    configService,

@@ -4,6 +4,8 @@ import (
 	"ai-server-go/src/core/providers/asr"
 	"ai-server-go/src/core/utils"
 	"context"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -14,7 +16,29 @@ type Provider struct {
 	conn *websocket.Conn
 }
 
+// 配置结构体
+type GoSherpaASRConfig struct {
+	Addr      string `json:"addr"`
+	OutputDir string `json:"output_dir"`
+}
+
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 func NewProvider(config *asr.Config, deleteFile bool, logger *utils.Logger) (*Provider, error) {
+	var cfg GoSherpaASRConfig
+	if err := parseProps(config.Data, &cfg); err != nil {
+		return nil, err
+	}
+	if cfg.Addr == "" {
+		return nil, fmt.Errorf("缺少addr配置")
+	}
 	base := asr.NewBaseProvider(config, deleteFile)
 
 	provider := &Provider{
@@ -25,7 +49,7 @@ func NewProvider(config *asr.Config, deleteFile bool, logger *utils.Logger) (*Pr
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second, // 设置握手超时
 	}
-	conn, _, err := dialer.DialContext(context.Background(), config.Data["addr"].(string), map[string][]string{})
+	conn, _, err := dialer.DialContext(context.Background(), cfg.Addr, map[string][]string{})
 	if err != nil {
 		return nil, err
 	}

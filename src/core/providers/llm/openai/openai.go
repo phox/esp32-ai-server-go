@@ -4,6 +4,7 @@ import (
 	"ai-server-go/src/core/providers/llm"
 	"ai-server-go/src/core/types"
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/sashabaranov/go-openai"
@@ -16,6 +17,25 @@ type Provider struct {
 	maxTokens int
 }
 
+// 配置结构体
+type OpenAILLMConfig struct {
+	APIKey      string  `json:"api_key"`
+	BaseURL     string  `json:"base_url"`
+	ModelName   string  `json:"model_name"`
+	Temperature float64 `json:"temperature"`
+	MaxTokens   int     `json:"max_tokens"`
+	TopP        float64 `json:"top_p"`
+}
+
+// 通用配置解析
+func parseProps(props map[string]interface{}, out interface{}) error {
+	b, err := json.Marshal(props)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, out)
+}
+
 // 注册提供者
 func init() {
 	llm.Register("openai", NewProvider)
@@ -23,15 +43,24 @@ func init() {
 
 // NewProvider 创建OpenAI提供者
 func NewProvider(config *llm.Config) (llm.Provider, error) {
+	var cfg OpenAILLMConfig
+	if err := parseProps(config.Extra, &cfg); err != nil {
+		return nil, fmt.Errorf("配置解析失败: %v", err)
+	}
 	base := llm.NewBaseProvider(config)
 	provider := &Provider{
 		BaseProvider: base,
-		maxTokens:    config.MaxTokens,
+		maxTokens:    cfg.MaxTokens,
 	}
 	if provider.maxTokens <= 0 {
 		provider.maxTokens = 500
 	}
-
+	// 将解析到的配置写回 config 以兼容后续逻辑
+	config.APIKey = cfg.APIKey
+	config.BaseURL = cfg.BaseURL
+	config.ModelName = cfg.ModelName
+	config.Temperature = cfg.Temperature
+	config.TopP = cfg.TopP
 	return provider, nil
 }
 

@@ -253,6 +253,7 @@ type RegisterRequest struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
 	Nickname string `json:"nickname"`
+	Role     string `json:"role" binding:"required"`
 }
 
 // UserDeviceRequest 用户设备请求
@@ -316,42 +317,67 @@ type AICapabilityRequest struct {
 	IsGlobal    bool                   `json:"is_global"`
 }
 
-// ProviderConfig AI提供商配置模型
+// ProviderConfig AI能力配置
 type ProviderConfig struct {
 	gorm.Model
-	Category    string          `json:"category" gorm:"size:20;not null;index"` // 类别（ASR/TTS/LLM/VLLLM）
-	Name        string          `json:"name" gorm:"size:50;not null"`           // provider名称（如 EdgeTTS、OllamaLLM）
-	Type        string          `json:"type" gorm:"size:20;not null"`           // provider类型（如 edge、ollama、openai等）
-	Version     string          `json:"version" gorm:"size:20;default:'v1'"`    // 版本号（如 v1、v2）
-	Weight      int             `json:"weight" gorm:"default:100"`              // 流量权重（0-100）
-	IsActive    bool            `json:"is_active" gorm:"default:true"`          // 是否启用
-	IsDefault   bool            `json:"is_default" gorm:"default:false"`        // 是否为默认版本
-	ModelName   string          `json:"model_name" gorm:"size:100"`             // 模型名称
-	BaseURL     string          `json:"url" gorm:"size:255"`                    // API地址
-	APIKey      string          `json:"api_key" gorm:"size:255"`                // API密钥
-	Voice       string          `json:"voice" gorm:"size:50"`                   // 语音（TTS专用）
-	Format      string          `json:"format" gorm:"size:20"`                  // 音频格式（TTS专用）
-	OutputDir   string          `json:"output_dir" gorm:"size:255"`             // 输出目录（TTS专用）
-	AppID       string          `json:"appid" gorm:"size:100"`                  // 应用ID（TTS专用）
-	Token       string          `json:"token" gorm:"size:255"`                  // Token（TTS专用）
-	Cluster     string          `json:"cluster" gorm:"size:50"`                 // 集群（TTS专用）
-	Temperature float64         `json:"temperature" gorm:"default:0.7"`         // LLM/VLLLM参数
-	MaxTokens   int             `json:"max_tokens" gorm:"default:2048"`         // LLM/VLLLM参数
-	TopP        float64         `json:"top_p" gorm:"default:0.9"`               // LLM/VLLLM参数
-	Security    json.RawMessage `json:"security" gorm:"type:json"`              // VLLLM图片安全参数
-	Extra       json.RawMessage `json:"extra" gorm:"type:json"`                 // 其他扩展参数
-	HealthScore float64         `json:"health_score" gorm:"default:100"`        // 健康评分（0-100）
+	Category  string          `json:"category" gorm:"size:20;not null;index"` // 类别（ASR/TTS/LLM/VLLLM）
+	Name      string          `json:"name" gorm:"size:50;not null"`           // provider名称（如 EdgeTTS、OllamaLLM）
+	Type      string          `json:"type" gorm:"size:20;not null"`           // provider类型（如 edge、ollama、openai等）
+	Version   string          `json:"version" gorm:"size:20;default:'v1'"`    // 版本号（如 v1、v2）
+	Weight    int             `json:"weight" gorm:"default:100"`              // 流量权重（0-100）
+	IsActive  bool            `json:"is_active" gorm:"default:true"`          // 是否启用
+	IsDefault bool            `json:"is_default" gorm:"default:false"`        // 是否为默认版本
+	Props     json.RawMessage `json:"props" gorm:"type:json"`                 // 其他扩展参数
 }
 
-// ProviderVersion 提供商版本信息
+// ProviderVersion 封装了ProviderConfig部分字段，用于接口返回
 type ProviderVersion struct {
-	Category    string    `json:"category"`     // 类别（ASR/TTS/LLM/VLLLM）
-	Name        string    `json:"name"`         // provider名称
-	Version     string    `json:"version"`      // 版本号
-	Weight      int       `json:"weight"`       // 流量权重
-	IsActive    bool      `json:"is_active"`    // 是否启用
-	IsDefault   bool      `json:"is_default"`   // 是否为默认版本
-	HealthScore float64   `json:"health_score"` // 健康评分（0-100）
-	CreatedAt   time.Time `json:"created_at"`   // 创建时间
-	UpdatedAt   time.Time `json:"updated_at"`   // 更新时间
+	Category  string    `json:"category"`   // 类别（ASR/TTS/LLM/VLLLM）
+	Name      string    `json:"name"`       // provider名称
+	Version   string    `json:"version"`    // 版本号
+	Weight    int       `json:"weight"`     // 流量权重
+	IsActive  bool      `json:"is_active"`  // 是否启用
+	IsDefault bool      `json:"is_default"` // 是否为默认版本
+	CreatedAt time.Time `json:"created_at"` // 创建时间
+	UpdatedAt time.Time `json:"updated_at"` // 更新时间
+}
+
+// UpdateProviderVersionRequest 更新Provider版本请求
+type UpdateProviderVersionRequest struct {
+	Weight    *int  `json:"weight"`
+	IsActive  *bool `json:"is_active"`
+	IsDefault *bool `json:"is_default"`
+}
+
+// 用户-Provider绑定
+// category: TTS/ASR/LLM/VLLLM
+// is_active: 是否启用
+// provider_id: 关联ProviderConfig
+
+type UserProvider struct {
+	ID         uint   `gorm:"primaryKey"`
+	UserID     uint   `gorm:"index"`
+	ProviderID uint   `gorm:"index"`
+	Category   string `gorm:"size:20"`
+	IsActive   bool   `gorm:"default:true"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type DeviceProvider struct {
+	ID         uint   `gorm:"primaryKey"`
+	DeviceID   uint   `gorm:"index"`
+	ProviderID uint   `gorm:"index"`
+	Category   string `gorm:"size:20"`
+	IsActive   bool   `gorm:"default:true"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// 保证GORM表名与schema一致
+func (DeviceProvider) TableName() string {
+	return "device_provider"
+}
+func (UserProvider) TableName() string {
+	return "user_provider"
 }
