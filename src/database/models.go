@@ -381,3 +381,60 @@ func (DeviceProvider) TableName() string {
 func (UserProvider) TableName() string {
 	return "user_provider"
 }
+
+// ChatMemory 聊天记忆模型
+type ChatMemory struct {
+	gorm.Model
+	UserID     *uint      `json:"user_id" gorm:"index"`                      // 用户ID（可选，支持匿名记忆）
+	DeviceID   uint       `json:"device_id" gorm:"not null;index"`           // 设备ID
+	SessionID  string     `json:"session_id" gorm:"size:100;not null;index"` // 会话ID
+	MemoryType string     `json:"memory_type" gorm:"size:20;not null"`       // 记忆类型：conversation, summary, key_points
+	Content    string     `json:"content" gorm:"type:text;not null"`         // 记忆内容
+	Importance int        `json:"importance" gorm:"default:1"`               // 重要性评分（1-10）
+	Tags       string     `json:"tags" gorm:"size:500"`                      // 标签，逗号分隔
+	LastUsed   *time.Time `json:"last_used"`                                 // 最后使用时间
+	UseCount   int        `json:"use_count" gorm:"default:0"`                // 使用次数
+	IsActive   bool       `json:"is_active" gorm:"default:true"`             // 是否激活
+
+	// 关联关系
+	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Device Device `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
+}
+
+// ChatSession 聊天会话模型
+type ChatSession struct {
+	gorm.Model
+	UserID       *uint      `json:"user_id" gorm:"index"`
+	DeviceID     uint       `json:"device_id" gorm:"not null;index"`
+	SessionID    string     `json:"session_id" gorm:"size:100;not null;uniqueIndex"`
+	Title        string     `json:"title" gorm:"size:200"`                  // 会话标题
+	Summary      string     `json:"summary" gorm:"type:text"`               // 会话摘要
+	MessageCount int        `json:"message_count" gorm:"default:0"`         // 消息数量
+	StartTime    time.Time  `json:"start_time" gorm:"not null"`             // 开始时间
+	EndTime      *time.Time `json:"end_time"`                               // 结束时间
+	Status       string     `json:"status" gorm:"size:20;default:'active'"` // 状态：active, archived, deleted
+	Tags         string     `json:"tags" gorm:"size:500"`                   // 标签
+
+	// 关联关系
+	User     *User        `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Device   Device       `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
+	Memories []ChatMemory `json:"memories,omitempty" gorm:"foreignKey:SessionID;references:SessionID"`
+}
+
+// ChatMessage 聊天消息模型
+type ChatMessage struct {
+	gorm.Model
+	SessionID   string    `json:"session_id" gorm:"size:100;not null;index"`
+	UserID      *uint     `json:"user_id" gorm:"index"`
+	DeviceID    uint      `json:"device_id" gorm:"not null;index"`
+	Role        string    `json:"role" gorm:"size:20;not null"`               // user, assistant, system
+	Content     string    `json:"content" gorm:"type:text;not null"`          // 消息内容
+	MessageType string    `json:"message_type" gorm:"size:20;default:'text'"` // text, image, audio, function_call
+	Metadata    string    `json:"metadata" gorm:"type:text"`                  // 元数据（JSON格式）
+	Timestamp   time.Time `json:"timestamp" gorm:"not null"`                  // 消息时间戳
+	IsProcessed bool      `json:"is_processed" gorm:"default:false"`          // 是否已处理（用于记忆生成）
+
+	// 关联关系
+	User   *User  `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	Device Device `json:"device,omitempty" gorm:"foreignKey:DeviceID"`
+}

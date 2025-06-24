@@ -744,3 +744,23 @@ func PCMSlicesToOpusData(pcmSlices [][]byte, sampleRate int, channels int, bitra
 
 	return allOpusPackets, nil
 }
+
+// GetSampleRateFromAudio 尝试从音频字节流中自动获取采样率（支持wav/mp3）
+func GetSampleRateFromAudio(audioData []byte) (int, error) {
+	if len(audioData) < 12 {
+		return 0, fmt.Errorf("音频数据过短，无法判断格式")
+	}
+	// 检查WAV头部
+	if string(audioData[0:4]) == "RIFF" && string(audioData[8:12]) == "WAVE" {
+		if len(audioData) < 28 {
+			return 0, fmt.Errorf("WAV头部数据不足")
+		}
+		// 采样率在24-27字节（小端序）
+		sampleRate := int(audioData[24]) | int(audioData[25])<<8 | int(audioData[26])<<16 | int(audioData[27])<<24
+		return sampleRate, nil
+	}
+	// 检查MP3（简单判断，建议用go-mp3解码器）
+	// 这里仅做演示，实际建议用文件方式
+	// 若需要支持mp3字节流采样率，建议先落盘再用go-mp3.NewDecoder
+	return 0, fmt.Errorf("暂不支持从字节流直接解析MP3采样率，请用文件方式")
+}

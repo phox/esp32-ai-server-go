@@ -324,9 +324,90 @@ CREATE TABLE IF NOT EXISTS device_provider (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     device_id BIGINT NOT NULL,
     provider_id BIGINT NOT NULL,
-    category VARCHAR(20) NOT NULL, -- 如 TTS/ASR/LLM/VLLLM
+    category VARCHAR(20) NOT NULL, -- 如TTS/ASR/LLM/VLLLM
     is_active BOOLEAN DEFAULT TRUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_device_category (device_id, category)
 );
+
+-- 聊天会话表
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '会话ID',
+    user_id BIGINT NULL COMMENT '用户ID（可选，支持匿名会话）',
+    device_id BIGINT NOT NULL COMMENT '设备ID',
+    session_id VARCHAR(100) NOT NULL UNIQUE COMMENT '会话标识符',
+    title VARCHAR(200) COMMENT '会话标题',
+    summary TEXT COMMENT '会话摘要',
+    message_count INT DEFAULT 0 COMMENT '消息数量',
+    start_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '开始时间',
+    end_time TIMESTAMP NULL COMMENT '结束时间',
+    status ENUM('active', 'archived', 'deleted') DEFAULT 'active' COMMENT '状态',
+    tags VARCHAR(500) COMMENT '标签，逗号分隔',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+    INDEX idx_user_id (user_id),
+    INDEX idx_device_id (device_id),
+    INDEX idx_session_id (session_id),
+    INDEX idx_status (status),
+    INDEX idx_start_time (start_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='聊天会话表';
+
+-- 聊天消息表
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '消息ID',
+    session_id VARCHAR(100) NOT NULL COMMENT '会话ID',
+    user_id BIGINT NULL COMMENT '用户ID（可选）',
+    device_id BIGINT NOT NULL COMMENT '设备ID',
+    role ENUM('user', 'assistant', 'system') NOT NULL COMMENT '消息角色',
+    content TEXT NOT NULL COMMENT '消息内容',
+    message_type VARCHAR(20) DEFAULT 'text' COMMENT '消息类型：text, image, audio, function_call',
+    metadata TEXT COMMENT '元数据（JSON格式）',
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息时间戳',
+    is_processed BOOLEAN DEFAULT FALSE COMMENT '是否已处理（用于记忆生成）',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+    INDEX idx_session_id (session_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_device_id (device_id),
+    INDEX idx_role (role),
+    INDEX idx_timestamp (timestamp),
+    INDEX idx_is_processed (is_processed)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='聊天消息表';
+
+-- 聊天记忆表
+CREATE TABLE IF NOT EXISTS chat_memories (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '记忆ID',
+    user_id BIGINT NULL COMMENT '用户ID（可选，支持匿名记忆）',
+    device_id BIGINT NOT NULL COMMENT '设备ID',
+    session_id VARCHAR(100) NOT NULL COMMENT '会话ID',
+    memory_type VARCHAR(20) NOT NULL COMMENT '记忆类型：conversation, summary, key_points',
+    content TEXT NOT NULL COMMENT '记忆内容',
+    importance INT DEFAULT 1 COMMENT '重要性评分（1-10）',
+    tags VARCHAR(500) COMMENT '标签，逗号分隔',
+    last_used TIMESTAMP NULL COMMENT '最后使用时间',
+    use_count INT DEFAULT 0 COMMENT '使用次数',
+    is_active BOOLEAN DEFAULT TRUE COMMENT '是否激活',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
+    INDEX idx_user_id (user_id),
+    INDEX idx_device_id (device_id),
+    INDEX idx_session_id (session_id),
+    INDEX idx_memory_type (memory_type),
+    INDEX idx_importance (importance),
+    INDEX idx_last_used (last_used),
+    INDEX idx_is_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='聊天记忆表';
+
+-- 插入默认系统配置
+INSERT INTO global_configs (config_key, config_value, config_type, description, is_system) VALUES
+('memory.enabled', 'true', 'boolean', '是否启用聊天记忆功能', TRUE),
+('memory.limit', '5', 'int', '记忆查询限制数量', TRUE),
+('memory.auto_generate', 'true', 'boolean', '是否自动生成记忆', TRUE),
+('memory.importance_threshold', '5', 'int', '记忆重要性阈值', TRUE);

@@ -76,6 +76,9 @@ func NewProvider(config *asr.Config, deleteFile bool, logger *utils.Logger) (*Pr
 }
 
 func (p *Provider) Transcribe(ctx context.Context, audioData []byte) (string, error) {
+	// 可选：自动获取采样率
+	// sampleRate, err := utils.GetSampleRateFromAudio(audioData)
+	// if err != nil { sampleRate = 16000 }
 	return "", nil
 }
 

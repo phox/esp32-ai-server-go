@@ -15,7 +15,9 @@ type AsrEventListener interface {
 	OnAsrResult(result string) bool
 }
 
-// ASRProvider 语音识别提供者接口
+// ASRProvider 语音识别能力接口
+// 兼容现有ASR实现，便于统一管理和能力回退
+// 典型方法：Transcribe、Reset、SetListener等
 type ASRProvider interface {
 	Provider
 	// 直接识别音频数据
@@ -48,3 +50,8 @@ type LLMProvider interface {
 
 // Message 对话消息
 type Message = types.Message
+
+// VADProvider 语音活动检测能力接口（预留）
+type VADProvider interface {
+	Detect(audio []byte, sampleRate int) ([][2]int, error)
+}

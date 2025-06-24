@@ -78,12 +78,14 @@ type ConnectionHandler struct {
 	configService *database.ConfigService
 	deviceService *database.DeviceService
 	userService   *database.UserService
+	memoryService *database.ChatMemoryService // 添加记忆服务
 
 	// 会话相关
 	sessionID string
 	deviceID  string            // 设备ID
 	clientId  string            // 客户端ID
 	headers   map[string]string // HTTP头部信息
+	userID    *uint             // 用户ID（可选）
 
 	// 客户端音频相关
 	clientAudioFormat        string
@@ -159,17 +161,27 @@ func NewConnectionHandler(
 	var configService *database.ConfigService
 	var deviceService *database.DeviceService
 	var userService *database.UserService
+	var memoryService *database.ChatMemoryService
 
 	if dbService != nil {
 		configService = database.NewConfigService(dbService, logger)
 		deviceService = database.NewDeviceService(dbService, logger)
 		userService = database.NewUserService(dbService, logger)
+		memoryService = database.NewChatMemoryService(dbService.GetDB(), logger) // 使用GetDB()获取gorm.DB实例
 	}
 
 	// 从请求中提取设备信息
 	deviceID := extractDeviceID(req)
 	clientId := extractClientID(req)
 	sessionID := uuid.New().String()
+
+	// 尝试从请求中提取用户ID（如果有认证）
+	var userID *uint
+	if authHeader := req.Header.Get("Authorization"); authHeader != "" {
+		// 这里可以解析JWT token获取用户ID
+		// 暂时设为nil，表示匿名用户
+		userID = nil
+	}
 
 	handler := &ConnectionHandler{
 		config:              config,
@@ -181,9 +193,11 @@ func NewConnectionHandler(
 		configService:       configService,
 		deviceService:       deviceService,
 		userService:         userService,
+		memoryService:       memoryService, // 设置记忆服务
 		sessionID:           sessionID,
 		deviceID:            deviceID,
 		clientId:            clientId,
+		userID:              userID, // 设置用户ID
 		headers:             extractHeaders(req),
 		clientListenMode:    "auto",
 		isDeviceVerified:    false,
@@ -240,8 +254,33 @@ func NewConnectionHandler(
 	logger.Info("使用TTS提供者: %s, 语音名称: %s", ttsProvider, voiceName)
 	handler.quickReplyCache = utils.NewQuickReplyCache(ttsProvider, voiceName)
 
-	// 初始化对话管理器
-	handler.dialogueManager = chat.NewDialogueManager(handler.logger, nil)
+	// 初始化对话管理器，集成记忆功能
+	var memory chat.MemoryInterface
+	if memoryService != nil {
+		// 解析设备ID为uint
+		var deviceIDUint uint
+		if deviceID != "" {
+			if parsed, err := strconv.ParseUint(deviceID, 10, 32); err == nil {
+				deviceIDUint = uint(parsed)
+			}
+		}
+
+		// 创建数据库记忆实例
+		memory = chat.NewDatabaseMemory(userID, deviceIDUint, sessionID, memoryService, logger)
+
+		// 创建或获取会话
+		if deviceIDUint > 0 {
+			title := fmt.Sprintf("设备 %s 的对话", deviceID)
+			if _, err := memoryService.CreateSession(userID, deviceIDUint, sessionID, title); err != nil {
+				logger.Warn("创建聊天会话失败: %v", err)
+			}
+		}
+	} else {
+		// 如果没有数据库，使用简单内存记忆
+		memory = chat.NewSimpleMemory(logger)
+	}
+
+	handler.dialogueManager = chat.NewDialogueManager(handler.logger, memory)
 
 	// 从数据库获取默认提示词
 	defaultPrompt, err := handler.configService.GetSystemConfigValue("prompt", "default_prompt")
@@ -565,7 +604,8 @@ func (h *ConnectionHandler) handleChatMessage(ctx context.Context, text string) 
 		Content: text,
 	})
 
-	return h.genResponseByLLM(ctx, h.dialogueManager.GetLLMDialogue(), currentRound)
+	// 使用带记忆的对话生成回复
+	return h.genResponseByLLM(ctx, h.dialogueManager.GetLLMDialogueWithAutoMemory(text), currentRound)
 }
 
 func (h *ConnectionHandler) genResponseByLLM(ctx context.Context, messages []providers.Message, round int) error {

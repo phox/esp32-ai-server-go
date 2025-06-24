@@ -200,10 +200,17 @@ func (p *Provider) Transcribe(ctx context.Context, audioData []byte) (string, er
 		return "", fmt.Errorf("正在进行流式识别, 请先调用Reset")
 	}
 
+	// 自动获取采样率（仅支持WAV头部，MP3建议用文件方式）
+	sampleRate, err := utils.GetSampleRateFromAudio(audioData)
+	if err != nil {
+		// 默认16000
+		sampleRate = 16000
+	}
+
 	// 创建临时文件
 	tempFile := filepath.Join(p.outputDir, fmt.Sprintf("temp_%d.wav", time.Now().UnixNano()))
-	if err := os.WriteFile(tempFile, audioData, 0644); err != nil {
-		return "", fmt.Errorf("保存临时文件失败: %v", err)
+	if err := utils.SaveAudioToWavFile(audioData, tempFile, sampleRate, 1, 16); err != nil {
+		return "", fmt.Errorf("保存临时WAV文件失败: %v", err)
 	}
 	defer func() {
 		if p.DeleteFile() {

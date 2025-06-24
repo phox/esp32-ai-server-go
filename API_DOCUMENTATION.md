@@ -1123,20 +1123,62 @@ curl -X POST http://localhost:8080/api/system-configs \
 **建议：**
 将上述内容补充/替换到 `API_DOCUMENTATION.md` Provider 相关章节，确保文档与后端实现一致。
 
+### 1.1.6 获取VAD Provider配置列表
+- **GET** `/api/configs/provider?category=vad`
+- **描述**: 获取所有VAD能力Provider配置
+
+### 1.1.7 创建/更新/删除VAD Provider配置
+- **POST** `/api/configs/provider`
+- **PUT** `/api/configs/provider/{id}`
+- **DELETE** `/api/configs/provider/{id}`
+- **请求体示例**（silero本地模型）:
 ```json
 {
-  "error": "需要管理员权限"
+  "category": "vad",
+  "name": "silero",
+  "type": "silero",
+  "version": "v1",
+  "weight": 100,
+  "is_active": true,
+  "is_default": true,
+  "props": {
+    "model_dir": "models/silero_vad.onnx",
+    "threshold": 0.5
+  }
+}
+```
+- **请求体示例**（第三方API）:
+```json
+{
+  "category": "vad",
+  "name": "thirdparty",
+  "type": "thirdparty",
+  "version": "v1",
+  "weight": 100,
+  "is_active": true,
+  "is_default": false,
+  "props": {
+    "api_url": "https://api.example.com/vad",
+    "api_key": "..."
+  }
 }
 ```
 
-```json
-{
-  "error": "系统配置不存在"
-}
-```
+### 1.2.6 用户/设备绑定VAD Provider
+- **POST** `/api/user/provider/bind`  `{ "category": "vad", "provider_id": 1 }`
+- **POST** `/api/device/provider/bind`  `{ "category": "vad", "provider_id": 1 }`
+- **GET** `/api/user/provider/list?category=vad`
+- **GET** `/api/device/provider/list?category=vad`
 
-```json
-{
-  "error": "设置系统配置失败: 配置类型错误"
-}
-``` 
+### 1.3.6 灰度发布与版本管理（VAD）
+- **GET** `/api/configs/provider/vad/{name}/versions`
+- **PUT** `/api/configs/provider/vad/{name}/weight`
+- **PUT** `/api/configs/provider/vad/{name}/default`
+- **POST** `/api/configs/provider/vad/{name}/refresh`
+
+### 1.4.2 ProviderConfig VAD props字段说明
+- silero: `{ "model_dir": "models/silero_vad.onnx", "threshold": 0.5 }`
+- thirdparty: `{ "api_url": "...", "api_key": "..." }`
+
+---
+VAD能力已支持Provider统一管理、绑定、优先级、灰度发布等机制，前后端可按上述API进行能力扩展和配置。 

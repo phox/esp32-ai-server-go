@@ -128,6 +128,9 @@ func (d *Database) AutoMigrate() error {
 		&ProviderConfig{},
 		&UserProvider{},
 		&DeviceProvider{},
+		&ChatSession{},
+		&ChatMessage{},
+		&ChatMemory{},
 	}
 
 	// 执行自动迁移
