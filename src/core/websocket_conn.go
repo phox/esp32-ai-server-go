@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,7 +32,21 @@ func (w *websocketConn) ReadMessage() (messageType int, p []byte, err error) {
 
 	messageType, p, err = w.conn.ReadMessage()
 	if err != nil {
-		// 如果读取出错，标记连接为已关闭
+		// 检查是否为正常关闭
+		if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			// 正常关闭，标记连接为已关闭
+			atomic.StoreInt32(&w.closed, 1)
+			return 0, nil, err
+		}
+		
+		// 检查是否为异常关闭
+		if websocket.IsUnexpectedCloseError(err) {
+			// 异常关闭，记录详细信息
+			atomic.StoreInt32(&w.closed, 1)
+			return 0, nil, fmt.Errorf("websocket异常关闭: %v", err)
+		}
+		
+		// 其他错误，标记连接为已关闭
 		atomic.StoreInt32(&w.closed, 1)
 		return 0, nil, err
 	}

@@ -10,8 +10,8 @@ import (
 	"ai-server-go/src/configs"
 	"ai-server-go/src/core/pool"
 	"ai-server-go/src/core/utils"
-	"ai-server-go/src/task"
 	"ai-server-go/src/database"
+	"ai-server-go/src/task"
 
 	"github.com/gorilla/websocket"
 )
@@ -203,9 +203,9 @@ func (ws *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Reques
 		defer func() {
 			// 连接结束时清理
 			ws.activeConnections.Delete(clientID)
-			if err := connContext.Close(); err != nil {
-				ws.logger.Error(fmt.Sprintf("清理连接上下文失败: %v", err))
-			}
+			// 注意：不要在这里调用connContext.Close()，因为handler.Handle()的defer会处理资源清理
+			// 只需要取消上下文即可
+			connCancel()
 		}()
 
 		handler.Handle(conn)

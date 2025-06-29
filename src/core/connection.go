@@ -30,6 +30,7 @@ import (
 	"ai-server-go/src/task"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 // Connection 统一连接接口
@@ -344,7 +345,17 @@ func (h *ConnectionHandler) LogError(msg string) {
 
 // Handle 处理WebSocket连接
 func (h *ConnectionHandler) Handle(conn Connection) {
-	defer conn.Close()
+	defer func() {
+		// 确保连接关闭
+		if h.conn != nil {
+			h.conn.Close()
+		}
+
+		// 调用Close方法进行完整的资源清理
+		h.Close()
+
+		h.LogInfo("连接处理结束，资源已清理")
+	}()
 
 	h.conn = conn
 
@@ -358,7 +369,6 @@ func (h *ConnectionHandler) Handle(conn Connection) {
 	if h.mcpManager == nil {
 		h.logger.Error("没有可用的MCP管理器")
 		return
-
 	} else {
 		h.LogInfo("使用从资源池获取的MCP管理器，快速绑定连接")
 		// 池化的管理器已经预初始化，只需要绑定连接
@@ -381,16 +391,34 @@ func (h *ConnectionHandler) Handle(conn Connection) {
 	for {
 		select {
 		case <-h.stopChan:
+			h.LogInfo("收到停止信号，退出主消息循环")
+			return
+		case <-h.ctx.Done():
+			h.LogInfo("上下文已取消，退出主消息循环")
 			return
 		default:
+			// 检查连接状态
+			if conn.IsClosed() {
+				h.LogInfo("检测到连接已关闭，退出主消息循环")
+				return
+			}
+
 			messageType, message, err := conn.ReadMessage()
 			if err != nil {
-				h.LogError(fmt.Sprintf("读取消息失败: %v", err))
+				// 检查是否为正常关闭
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+					h.LogInfo("客户端正常关闭连接")
+				} else if websocket.IsUnexpectedCloseError(err) {
+					h.LogError(fmt.Sprintf("客户端异常关闭连接: %v", err))
+				} else {
+					h.LogError(fmt.Sprintf("读取消息失败: %v", err))
+				}
 				return
 			}
 
 			if err := h.handleMessage(messageType, message); err != nil {
 				h.LogError(fmt.Sprintf("处理消息失败: %v", err))
+				// 不要因为单个消息处理失败就退出，继续处理下一个消息
 			}
 		}
 	}
@@ -398,6 +426,13 @@ func (h *ConnectionHandler) Handle(conn Connection) {
 
 // processClientTextMessagesCoroutine 处理文本消息队列
 func (h *ConnectionHandler) processClientTextMessagesCoroutine() {
+	defer func() {
+		if r := recover(); r != nil {
+			h.LogError(fmt.Sprintf("文本消息处理协程发生panic: %v", r))
+		}
+		h.LogInfo("文本消息处理协程已退出")
+	}()
+
 	for {
 		select {
 		case <-h.stopChan:
@@ -412,6 +447,13 @@ func (h *ConnectionHandler) processClientTextMessagesCoroutine() {
 
 // processClientAudioMessagesCoroutine 处理音频消息队列
 func (h *ConnectionHandler) processClientAudioMessagesCoroutine() {
+	defer func() {
+		if r := recover(); r != nil {
+			h.LogError(fmt.Sprintf("音频消息处理协程发生panic: %v", r))
+		}
+		h.LogInfo("音频消息处理协程已退出")
+	}()
+
 	for {
 		select {
 		case <-h.stopChan:
@@ -425,6 +467,13 @@ func (h *ConnectionHandler) processClientAudioMessagesCoroutine() {
 }
 
 func (h *ConnectionHandler) sendAudioMessageCoroutine() {
+	defer func() {
+		if r := recover(); r != nil {
+			h.LogError(fmt.Sprintf("音频发送协程发生panic: %v", r))
+		}
+		h.LogInfo("音频发送协程已退出")
+	}()
+
 	for {
 		select {
 		case <-h.stopChan:
@@ -895,11 +944,23 @@ func (h *ConnectionHandler) checkAndBroadcastAuthCode() error {
 
 // processTTSQueueCoroutine 处理TTS队列
 func (h *ConnectionHandler) processTTSQueueCoroutine() {
+	defer func() {
+		if r := recover(); r != nil {
+			h.LogError(fmt.Sprintf("TTS队列处理协程发生panic: %v", r))
+		}
+		h.LogInfo("TTS队列处理协程已退出")
+	}()
+
 	for {
 		select {
 		case <-h.stopChan:
 			return
 		case task := <-h.ttsQueue:
+			// 检查连接状态，如果连接已关闭则跳过TTS处理
+			if h.conn != nil && h.conn.IsClosed() {
+				h.LogInfo("连接已关闭，跳过TTS处理")
+				continue
+			}
 			h.processTTSTask(task.text, task.textIndex, task.round)
 		}
 	}
@@ -1056,29 +1117,40 @@ func (h *ConnectionHandler) cleanTTSAndAudioQueue(bClose bool) error {
 	if bClose {
 		msgPrefix = "关闭连接，"
 	}
+
+	// 检查连接状态
+	if h.conn != nil && h.conn.IsClosed() {
+		h.LogInfo(msgPrefix + "连接已关闭，跳过队列清理")
+		return nil
+	}
+
 	// 终止tts任务，不再继续将文本加入到tts队列，清空ttsQueue队列
+	ttsCount := 0
 	for {
 		select {
 		case task := <-h.ttsQueue:
+			ttsCount++
 			h.LogInfo(fmt.Sprintf(msgPrefix+"丢弃一个TTS任务: %s", task.text))
 		default:
 			// 队列已清空，退出循环
-			h.LogInfo(msgPrefix + "ttsQueue队列已清空，停止处理TTS任务,准备清空音频队列")
+			h.LogInfo(fmt.Sprintf(msgPrefix+"ttsQueue队列已清空，共丢弃%d个TTS任务", ttsCount))
 			goto clearAudioQueue
 		}
 	}
 
 clearAudioQueue:
 	// 终止audioMessagesQueue发送，清空队列里的音频数据
+	audioCount := 0
 	for {
 		select {
 		case task := <-h.audioMessagesQueue:
+			audioCount++
 			h.LogInfo(fmt.Sprintf(msgPrefix+"丢弃一个音频任务: %s", task.text))
 			// 根据配置删除被丢弃的音频文件
 			h.deleteAudioFileIfNeeded(task.filepath, msgPrefix+"丢弃音频任务时")
 		default:
 			// 队列已清空，退出循环
-			h.LogInfo(msgPrefix + "audioMessagesQueue队列已清空，停止处理音频任务")
+			h.LogInfo(fmt.Sprintf(msgPrefix+"audioMessagesQueue队列已清空，共丢弃%d个音频任务", audioCount))
 			return nil
 		}
 	}
