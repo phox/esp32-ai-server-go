@@ -76,7 +76,7 @@ type UserCapability struct {
 type Device struct {
 	gorm.Model
 	DeviceUUID      string     `json:"device_uuid" gorm:"uniqueIndex;size:100;not null"`
-	OUI             string     `json:"oui" gorm:"size:8;not null"`
+	OUI             string     `json:"oui" gorm:"column:oui;size:8;not null"`
 	SN              string     `json:"sn" gorm:"size:50;not null"`
 	DeviceName      string     `json:"device_name" gorm:"size:100;not null"`
 	DeviceType      string     `json:"device_type" gorm:"size:50"`
